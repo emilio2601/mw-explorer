@@ -76,14 +76,15 @@ Built from the `Dockerfile` (like airline-stats on the same host). One app: the 
 the page and API; a daily cron job (`app.json`, 05:15 UTC) rebuilds. Both use a persistent volume at
 `/data` for the cache and build output, owned by the container's uid 1000.
 
-Everything below runs through Dokku's SSH interface (`ssh dokku@vps1 <command>`, the same access
-`git push` uses), so no `sudo` is needed. `vps1` is the server over Tailscale; SSH isn't open publicly.
+Most steps run through Dokku's SSH interface (`ssh dokku@vps1 <command>`, the same access
+`git push` uses). `vps1` is the server over Tailscale; SSH isn't open publicly.
 
 ```bash
 ssh dokku@vps1 apps:create mw-explorer
-ssh dokku@vps1 storage:ensure-directory --chown heroku mw-explorer-data   # owned by uid 1000, the container user
+ssh dokku@vps1 storage:create --chown heroku mw-explorer-data   # owned by uid 1000, the container user
 ssh dokku@vps1 storage:mount mw-explorer /var/lib/dokku/data/storage/mw-explorer-data:/data
 ssh dokku@vps1 domains:set mw-explorer mw.emilio2601.dev
+ssh dokku@vps1 ports:set mw-explorer http:80:5000   # otherwise Dokku maps EXPOSE 5000 to public port 5000
 ```
 
 DNS (Cloudflare, zone `emilio2601.dev`, SSL/TLS mode Full): one `AAAA mw → 2a01:4f8:1c1e:bfc6::1`
@@ -100,20 +101,22 @@ ssh dokku@vps1 letsencrypt:enable mw-explorer
 
 The station-data cache has to come from a machine with IPv4: ISED (Canada) and the CRT (Mexico) are
 IPv4-only, while the FCC, NOAA and wspr.live work over IPv6. Build it locally (any build refreshes it
-when it's older than 30 days) and pipe it into the app's volume; repeat monthly:
+when it's older than 30 days) and copy it into the volume; repeat monthly. `dokku run` doesn't pass
+stdin through, and the volume belongs to the container's uid, so this step needs `sudo` on the server:
 
 ```bash
 python3 -m mw_explorer build --freq 540
-ssh dokku@vps1 run --no-tty mw-explorer sh -c 'mkdir -p /data/cache && cat > /data/cache/fcc_cache.json' < data/cache/fcc_cache.json
+scp data/cache/fcc_cache.json vps1:
+ssh -t vps1 'sudo install -o 1000 -g 1000 -m 644 ~/fcc_cache.json /var/lib/dokku/data/storage/mw-explorer-data/cache/fcc_cache.json && rm ~/fcc_cache.json'
 ```
 
-(If `dokku run` doesn't pass stdin through on your Dokku version, `scp` the file to `vps1` and
-`sudo install -o 1000 -g 1000` it into `/var/lib/dokku/data/storage/mw-explorer-data/cache/`.)
-
-Then start the first build (about 2 hours); afterwards the daily cron in `app.json` runs it:
+Then start the first build (about 2 hours); afterwards the daily cron in `app.json` runs it. Use
+`nice --adjustment=19`: Dokku's `run` swallows a separate `-n` argument, so `nice -n 19` fails.
 
 ```bash
-ssh dokku@vps1 run --detach mw-explorer nice -n 19 python3 -m mw_explorer build --workers 3
+ssh dokku@vps1 run:detached mw-explorer nice --adjustment=19 python3 -m mw_explorer build --workers 3
+ssh dokku@vps1 run:list mw-explorer                      # running builds
+ssh dokku@vps1 run:logs --container mw-explorer.run.N    # follow one
 ```
 
 Each build covers 48 hours, so the 24-hour slider stays full until the next daily run, and a missed run still leaves most of a day. For a private
