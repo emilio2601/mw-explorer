@@ -1,0 +1,19 @@
+{
+  "_help": "Reality checks applied on top of FCC data. Station keys are CALL or CALL@kHz. Fields: off (true), keep (true: keep a Mexican station the CRT license list doesn't show), kw (replace licensed power), adjust_db (add dB to the field), note (shown in the explorer). Country entries take adjust_db/off/note and apply to every station from that country unless the station has its own entry.",
+  "countries": {
+    "CU": {
+      "adjust_db": -10,
+      "note": "Cuban powers are old FCC listings, not current notifications; grid failures keep many stations off or at reduced power."
+    }
+  },
+  "stations": {
+    "CMBX@1010": {
+      "off": true,
+      "note": "Listed at 500 kW (Wajay); DXers report never hearing a Cuban on 1010. Treated as a paper allocation."
+    },
+    "CMBV@550": {
+      "off": true,
+      "note": "Listed at 500 kW (Wajay), like CMBX; no evidence Cuba ever ran 500 kW. Treated as a paper allocation."
+    }
+  }
+}
