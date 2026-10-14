@@ -1,0 +1,535 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AM Channel Explorer</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<style>
+  :root { --surface:#fcfcfb; --ink:#0b0b0b; --ink2:#52514e; --muted:#898781; --grid:#e1e0d9;
+    --ring:rgba(11,11,11,0.10); --accent:#2a78d6; }
+  html,body { margin:0; height:100%; background:#f9f9f7; color:var(--ink);
+    font:13px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+  #map { position:absolute; inset:0; }
+  #map.picking { cursor:crosshair; }
+  .panel { position:absolute; z-index:1000; top:12px; right:12px; width:360px; max-height:calc(100% - 24px);
+    overflow:auto; background:var(--surface); border:1px solid var(--ring); border-radius:8px;
+    padding:12px 14px; box-shadow:0 2px 12px rgba(0,0,0,.08); box-sizing:border-box; }
+  h1 { font-size:14px; margin:0 0 8px; }
+  .controls { display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
+  .controls input { font:inherit; padding:4px 6px; border:1px solid #c3c2b7; border-radius:6px; background:#fff; }
+  #freq { width:70px; font-weight:600; font-variant-numeric:tabular-nums; }
+  #search { flex:1; min-width:120px; }
+  button { font:inherit; padding:3px 9px; border:1px solid #c3c2b7; border-radius:6px; background:#fff; cursor:pointer; color:var(--ink); }
+  button:hover { background:#f0efec; }
+  .loc { display:flex; gap:6px; align-items:center; margin-top:8px; flex-wrap:wrap; }
+  .loc b { font-weight:600; }
+  .sub, .note { color:var(--ink2); font-size:12px; }
+  .row { display:flex; align-items:center; gap:8px; margin:10px 0 4px; }
+  input[type=range] { flex:1; }
+  .time { font-variant-numeric:tabular-nums; font-weight:600; min-width:110px; }
+  table { border-collapse:collapse; width:100%; font-variant-numeric:tabular-nums; margin-top:6px; }
+  th,td { padding:2px 4px; text-align:right; border-bottom:1px solid var(--grid); }
+  th:first-child,td:first-child { text-align:left; }
+  th { color:var(--muted); font-weight:500; font-size:11px; }
+  tbody tr { cursor:pointer; }
+  tbody tr:hover { background:#f0efec; }
+  tr.target td { font-weight:600; background:#eef4fc; }
+  .sw { display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:5px; vertical-align:-1px; }
+  .tag { color:var(--muted); font-size:11px; }
+  .verdict { margin:8px 0 4px; font-weight:500; }
+  .pill { display:inline-flex; gap:6px; align-items:center; background:#eef4fc; border-radius:12px;
+    padding:2px 4px 2px 10px; margin-top:8px; }
+  .pill button { border:none; background:none; padding:0 6px; color:var(--ink2); }
+  .legend { display:flex; flex-wrap:wrap; gap:4px 10px; margin-top:8px; font-size:12px; }
+  .err { color:#d03b3b; margin-top:8px; }
+  svg text { font-size:10px; fill:var(--muted); }
+  #hover { position:absolute; z-index:1001; pointer-events:none; background:var(--surface);
+    border:1px solid var(--ring); border-radius:6px; padding:6px 8px; font-size:12px; display:none;
+    box-shadow:0 2px 8px rgba(0,0,0,.12); font-variant-numeric:tabular-nums; max-width:280px; }
+  .lbl { background:none; border:none; box-shadow:none; font-weight:600; color:var(--ink);
+    text-shadow:0 0 3px #fff,0 0 3px #fff,0 0 3px #fff; }
+  .lbl::before { display:none; }
+  @media (max-width:640px) { .panel { left:12px; right:12px; width:auto; top:auto; bottom:12px; max-height:55%; } }
+</style></head>
+<body><div id="map"></div>
+<div class="panel">
+  <h1>AM channel explorer</h1>
+  <div class="controls">
+    <button id="prev" aria-label="Previous channel">◀</button>
+    <input id="freq" type="number" min="530" max="1700" step="10" aria-label="Frequency in kHz"> kHz
+    <button id="next" aria-label="Next channel">▶</button>
+    <input id="search" list="calls" placeholder="Find call sign…" aria-label="Find a station by call sign">
+    <datalist id="calls"></datalist>
+  </div>
+  <div class="loc" id="loc"></div>
+  <div id="msg" class="err" role="status" hidden></div>
+  <div id="body"></div>
+</div>
+<div id="hover"></div>
+<script>
+const COLORS_OTHER = '#b4b2a9', NULL_DEPTH = 20, FRAMES = 25, CELL = 12;
+const DEFAULT_HOME = { name: 'NYC', lat: 40.71, lon: -74.01 };
+let IDX = null, CH = null, cells = [], hours = [], frame = 0, target = null, loading = 0;
+let HOME = savedHome(), HD = null, WSPR = null, picking = false;
+const $ = id => document.getElementById(id);
+const R = Math.PI / 180;
+
+function savedHome() {
+  try { const h = JSON.parse(localStorage.getItem('mw-home')); if (h && isFinite(h.lat) && isFinite(h.lon)) return h; } catch (e) {}
+  return { ...DEFAULT_HOME };
+}
+function saveHome() { try { localStorage.setItem('mw-home', JSON.stringify(HOME)); } catch (e) {} }
+const homeName = () => HOME.name || `${HOME.lat.toFixed(2)}, ${HOME.lon.toFixed(2)}`;
+
+const map = L.map('map', { worldCopyJump: true, preferCanvas: true });
+L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}', {
+  attribution: 'Tiles &copy; Esri', maxZoom: 10 }).addTo(map);
+const stLayer = L.layerGroup().addTo(map), termLayer = L.layerGroup().addTo(map);
+let fitted = false;
+
+const color = k => CH.stations[k].color || COLORS_OTHER;
+const rgb = c => [1, 3, 5].map(i => parseInt(c.slice(i, i + 2), 16));
+const name = k => CH.stations[k].call + (CH.stations[k].color ? '' : ` (${CH.stations[k].country})`);
+const psum = a => a.length ? 10 * Math.log10(a.reduce((s, v) => s + 10 ** (v / 10), 0)) : null;
+const fmt = v => v == null ? '—' : Math.round(v);
+const hourKey = d => d.toISOString().slice(0, 13).replace(/[-T]/g, '');
+const keyDate = k => new Date(Date.UTC(+k.slice(0, 4), +k.slice(4, 6) - 1, +k.slice(6, 8), +k.slice(8, 10)));
+const localLabel = k => keyDate(k).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' });
+
+function gcKm(a, b) {
+  const p1 = a.lat * R, p2 = b.lat * R, dl = (b.lon - a.lon) * R;
+  return 6371 * Math.acos(Math.min(1, Math.sin(p1) * Math.sin(p2) + Math.cos(p1) * Math.cos(p2) * Math.cos(dl)));
+}
+function bearingDeg(a, b) {
+  const p1 = a.lat * R, p2 = b.lat * R, dl = (b.lon - a.lon) * R;
+  const y = Math.sin(dl) * Math.cos(p2), x = Math.cos(p1) * Math.sin(p2) - Math.sin(p1) * Math.cos(p2) * Math.cos(dl);
+  return (Math.atan2(y, x) / R + 360) % 360;
+}
+function gc(a, b) {
+  const p1 = a.lat * R, l1 = a.lon * R, p2 = b.lat * R, l2 = b.lon * R;
+  const d = Math.acos(Math.min(1, Math.sin(p1) * Math.sin(p2) + Math.cos(p1) * Math.cos(p2) * Math.cos(l2 - l1)));
+  if (!d) return [[a.lat, a.lon]];
+  const pts = [];
+  for (let i = 0; i <= 48; i++) {
+    const f = i / 48, A = Math.sin((1 - f) * d) / Math.sin(d), B = Math.sin(f * d) / Math.sin(d);
+    const x = A * Math.cos(p1) * Math.cos(l1) + B * Math.cos(p2) * Math.cos(l2);
+    const y = A * Math.cos(p1) * Math.sin(l1) + B * Math.cos(p2) * Math.sin(l2);
+    const z = A * Math.sin(p1) + B * Math.sin(p2);
+    pts.push([Math.atan2(z, Math.hypot(x, y)) / R, Math.atan2(y, x) / R]);
+  }
+  return pts;
+}
+
+// NOAA low-precision solar position, for the sunrise/sunset lines.
+function solar(date) {
+  const start = Date.UTC(date.getUTCFullYear(), 0, 1), doy = Math.floor((date - start) / 864e5) + 1;
+  const min = date.getUTCHours() * 60 + date.getUTCMinutes();
+  const g = 2 * Math.PI / 365 * (doy - 1 + (min / 60 - 12) / 24);
+  const eqt = 229.18 * (0.000075 + 0.001868 * Math.cos(g) - 0.032077 * Math.sin(g) - 0.014615 * Math.cos(2 * g) - 0.040849 * Math.sin(2 * g));
+  const decl = 0.006918 - 0.399912 * Math.cos(g) + 0.070257 * Math.sin(g) - 0.006758 * Math.cos(2 * g)
+    + 0.000907 * Math.sin(2 * g) - 0.002697 * Math.cos(3 * g) + 0.00148 * Math.sin(3 * g);
+  return { decl, eqt, min };
+}
+function sunElev(lat, lon, s) {
+  const ha = (((s.min + s.eqt + 4 * lon) % 1440 + 1440) % 1440) / 4 - 180;
+  return Math.asin(Math.sin(lat * R) * Math.sin(s.decl) + Math.cos(lat * R) * Math.cos(s.decl) * Math.cos(ha * R)) / R;
+}
+function terminator(s, elev, lon0, lon1) {
+  const pts = [];
+  for (let lon = Math.floor(lon0) - 5; lon <= lon1 + 5; lon++) {
+    let prev = null;
+    for (let lat = -80; lat <= 80; lat += 0.5) {
+      const e = sunElev(lat, lon, s) - elev;
+      if (prev && (e > 0) !== (prev[1] > 0)) { pts.push([prev[0] + (lat - prev[0]) * prev[1] / (prev[1] - e), lon]); break; }
+      prev = [lat, e];
+    }
+  }
+  return pts;
+}
+
+function cell(fi, c) {
+  const v = cells[fi], o = c * CELL, best = v.getUint16(o, true), top = [];
+  for (let i = 0; i < 3; i++) {
+    const k = v.getUint16(o + 3 + i * 3, true);
+    if (k !== 0xFFFF) top.push([k, v.getInt8(o + 5 + i * 3)]);
+  }
+  return { best: best === 0xFFFF ? -1 : best, du: v.getInt8(o + 2), top };
+}
+
+const Grid = L.Layer.extend({
+  onAdd(m) { this._c = L.DomUtil.create('canvas', 'leaflet-zoom-hide');
+    m.getPanes().overlayPane.appendChild(this._c); m.on('moveend zoomend resize', this.draw, this); this.draw(); },
+  onRemove(m) { this._c.remove(); m.off('moveend zoomend resize', this.draw, this); },
+  draw() {
+    if (!this._c || !CH || !cells[frame]) return;
+    const c = this._c, size = map.getSize(), G = IDX.grid;
+    L.DomUtil.setPosition(c, map.containerPointToLayerPoint([0, 0]));
+    c.width = size.x; c.height = size.y;
+    const ctx = c.getContext('2d'), RGB = CH.stations.map((s, k) => rgb(color(k)));
+    for (let i = 0; i < G.nlat; i++) for (let j = 0; j < G.nlon; j++) {
+      const info = cell(frame, i * G.nlon + j);
+      if (info.best < 0) continue;
+      const lat = G.lat0 + i * G.step, lon = G.lon0 + j * G.step;
+      const a = map.latLngToContainerPoint([lat + G.step, lon]), b = map.latLngToContainerPoint([lat, lon + G.step]);
+      const alpha = Math.max(0.12, Math.min(0.7, 0.12 + info.du / 20 * 0.58));
+      const [r, g, bl] = RGB[info.best];
+      ctx.fillStyle = `rgba(${r},${g},${bl},${alpha})`;
+      ctx.fillRect(a.x, a.y, b.x - a.x + 0.5, b.y - a.y + 0.5);
+    }
+  }
+});
+const grid = new Grid().addTo(map);
+
+// Levels at home for one hour, with the live WSPR correction applied to skywave in the first hour.
+function homeRows(fi) {
+  if (!HD) return [];
+  return HD.stations.map(r => {
+    let sky = r.sky[fi], t = r.t[fi];
+    const w = fi === 0 && WSPR && WSPR[r.i];
+    if (w && w.delta != null && sky != null) { sky += w.delta; t = psum([sky, r.gw[fi]].filter(v => v != null)); }
+    return { k: r.i, t, sky, gw: r.gw[fi], m: r.m[fi], brg: r.brg, km: r.km };
+  }).filter(r => r.t != null).sort((a, b) => b.t - a.t);
+}
+
+function analysis(fi) {
+  const rows = homeRows(fi), out = { rows };
+  if (rows.length > 1) out.margin = rows[0].t - psum(rows.slice(1).map(r => r.t));
+  const tk = target == null ? -1 : CH.stations.findIndex(s => s.call === target);
+  const tr = rows.find(r => r.k === tk);
+  if (!tr) return out;
+  const rivals = rows.filter(r => r !== tr);
+  if (!rivals.length) return Object.assign(out, { t: tr.t, omni: 99, loop: 99, nul: 0 });
+  const floor = 10 ** (-NULL_DEPTH / 20);
+  const gain = (b, n) => 20 * Math.log10(Math.max(floor, Math.abs(Math.sin((b - n) * R))));
+  let best = -999, nul = 0;
+  for (let n = 0; n < 180; n++) {
+    const s = tr.t + gain(tr.brg, n) - psum(rivals.map(r => r.t + gain(r.brg, n)));
+    if (s > best) { best = s; nul = n; }
+  }
+  return Object.assign(out, { t: tr.t, omni: tr.t - psum(rivals.map(r => r.t)), loop: best, nul, rival: rivals[0].k });
+}
+
+function verdict(a, fi) {
+  const hn = homeName();
+  if (!HD) return 'Loading levels at your location…';
+  if (target != null) {
+    if (a.t == null || a.t < IDX.noise) return `${target} below the noise at ${hn}.`;
+    if (HD.kp != null && HD.kp >= 5 && fi === 0) return 'Geomagnetic storm (Kp≥5): skywave degraded and unstable.';
+    const how = `null toward ${a.nul}°/${a.nul + 180}° (loop face or ferrite rod end pointed that way)`;
+    if (a.loop >= 0) return `${target} can win at ${hn}: ${how}.`;
+    if (a.loop > -1) return `${target} is about even with everything else at ${hn}: ${how}. Expect fading back and forth.`;
+    if (a.loop >= -10) return `${target} ~${Math.round(-a.loop)} dB under ${name(a.rival)} & co. even with the ${how}. Peaks possible.`;
+    return `${name(a.rival)} & co. bury ${target}: ${Math.round(a.loop)} dB even with the ${how}.`;
+  }
+  if (!a.rows.length) return 'Nothing modeled above the noise.';
+  if (a.margin == null) return `${name(a.rows[0].k)} is alone on the channel.`;
+  const lead = name(a.rows[0].k), m = Math.round(a.margin);
+  if (a.margin >= 6) return `${lead} owns ${hn} (+${m} dB over everything else).`;
+  if (a.margin >= 1) return `Mush at ${hn}: ${lead} leads by only ${m} dB.`;
+  if (a.margin > -1) return `Mush at ${hn}: ${lead} and ${name(a.rows[1].k)} are about even.`;
+  return `Mush at ${hn}: ${lead} is loudest, but everything else combined is ${-m} dB stronger.`;
+}
+
+function sparkline() {
+  if (target == null || !HD) return '';
+  const w = 320, h = 96, padL = 30, padR = 8, padT = 8, padB = 18;
+  const ys = hours.map((k, i) => analysis(i).loop ?? null), vals = ys.filter(v => v != null);
+  const hi = Math.ceil(Math.max(10, ...vals) / 10) * 10, lo = Math.max(-40, Math.floor(Math.min(-10, ...vals) / 10) * 10);
+  const X = i => padL + i * (w - padL - padR) / Math.max(1, ys.length - 1);
+  const Y = v => padT + (hi - Math.max(lo, Math.min(hi, v))) * (h - padT - padB) / (hi - lo);
+  const ticks = []; for (let v = lo; v <= hi; v += 10) ticks.push(v);
+  const gridLines = ticks.map(v => `<line x1="${padL}" x2="${w - padR}" y1="${Y(v)}" y2="${Y(v)}" stroke="${v === 0 ? '#898781' : '#e1e0d9'}" ${v === 0 ? 'stroke-dasharray="3 3"' : ''}/>` +
+    `<text x="${padL - 4}" y="${Y(v) + 3}" text-anchor="end">${v === lo && lo === -40 ? '≤' : ''}${v > 0 ? '+' : ''}${v}</text>`).join('');
+  const xt = hours.map((k, i) => i).filter(i => i % 6 === 0 || i === ys.length - 1).map(i =>
+    `<text x="${X(i)}" y="${h - 4}" text-anchor="middle">${localLabel(hours[i]).replace(/^\w+ /, '').replace(':00', '')}</text>`).join('');
+  let path = '', pen = false;
+  ys.forEach((v, i) => { if (v == null) { pen = false; return; } path += `${pen ? 'L' : 'M'}${X(i).toFixed(1)},${Y(v).toFixed(1)}`; pen = true; });
+  const cur = ys[frame];
+  return `<div class="note">${target} margin over everything else at ${homeName()}, dB (with best loop null):</div>` +
+    `<svg width="100%" viewBox="0 0 ${w} ${h}" role="img" aria-label="${target} margin over the rest of the channel by hour">
+    ${gridLines}${xt}<path d="${path}" fill="none" stroke="var(--accent)" stroke-width="2"/>
+    ${cur == null ? '' : `<circle cx="${X(frame)}" cy="${Y(cur)}" r="4" fill="var(--accent)" stroke="#fff" stroke-width="2"/>
+    <text x="${Math.min(X(frame) + 7, w - 30)}" y="${Y(cur) - 6}" style="fill:var(--ink);font-weight:600">${cur > 0 ? '+' : ''}${Math.round(cur)}</text>`}</svg>`;
+}
+
+function topWinners() {
+  return CH.stations.map((s, k) => k).filter(k => CH.stations[k].wins).sort((a, b) => CH.stations[b].wins - CH.stations[a].wins);
+}
+
+function drawStations() {
+  stLayer.clearLayers();
+  if (!CH) return;
+  const tk = CH.stations.findIndex(s => s.call === target), top8 = new Set(topWinners().slice(0, 8));
+  CH.stations.forEach((s, k) => {
+    const isT = k === tk, big = s.wins >= hours.length || isT;
+    if (isT || top8.has(k)) L.polyline(gc(HOME, s), { color: isT ? '#0b0b0b' : color(k), weight: isT ? 2.5 : 1.5,
+      opacity: 0.9, dashArray: isT ? '6 4' : null, interactive: false }).addTo(stLayer);
+    const m = L.circleMarker([s.lat, s.lon], { radius: isT ? 7 : big ? 5 : 3, color: isT ? '#0b0b0b' : '#fff',
+      weight: big ? 2 : 1, fillColor: color(k), fillOpacity: 1 });
+    if (big) m.bindTooltip(s.call, { permanent: true, direction: 'right', className: 'lbl', offset: [6, 0] });
+    m.on('mouseover', () => { hoverStation = k; });
+    m.on('mouseout', () => { hoverStation = -1; });
+    m.on('click', () => { if (!picking) setTarget(s.call); });
+    m.addTo(stLayer);
+  });
+  L.circleMarker([HOME.lat, HOME.lon], { radius: 6, color: '#0b0b0b', weight: 2, fillColor: '#fff', fillOpacity: 1 })
+    .bindTooltip(homeName(), { permanent: true, direction: 'left', className: 'lbl', offset: [-6, 0] }).addTo(stLayer);
+}
+function drawTerminators() {
+  termLayer.clearLayers();
+  if (!hours[frame]) return;
+  const s = solar(keyDate(hours[frame])), G = IDX.grid, lon1 = G.lon0 + G.nlon * G.step;
+  L.polyline(terminator(s, 0, G.lon0, lon1), { color: '#52514e', weight: 1.5, dashArray: '6 4', interactive: false }).addTo(termLayer);
+  L.polyline(terminator(s, -12, G.lon0, lon1), { color: '#52514e', weight: 1, dashArray: '2 4', interactive: false }).addTo(termLayer);
+}
+
+function renderLoc() {
+  $('loc').innerHTML = picking
+    ? `<span>Click the map to set your location</span><button id="geo">Use my location</button><button id="cancel">Cancel</button>`
+    : `<span>📍 <b>${homeName()}</b>${HOME.name ? ` <span class="tag">${HOME.lat.toFixed(2)}, ${HOME.lon.toFixed(2)}</span>` : ''}</span><button id="change">Change</button>`;
+  if (picking) {
+    $('cancel').onclick = () => setPicking(false);
+    $('geo').onclick = () => {
+      if (!navigator.geolocation) return say('This browser has no location access.');
+      navigator.geolocation.getCurrentPosition(p => setHome(p.coords.latitude, p.coords.longitude),
+        () => say("Couldn't get your location."), { maximumAge: 600000, timeout: 10000 });
+    };
+  } else $('change').onclick = () => setPicking(true);
+}
+function setPicking(on) { picking = on; $('map').classList.toggle('picking', on); renderLoc(); }
+
+function render() {
+  renderLoc();
+  if (!CH) return;
+  const a = analysis(frame), tk = CH.stations.findIndex(s => s.call === target);
+  let shown = a.rows.slice(0, 8);
+  if (tk >= 0 && !shown.some(r => r.k === tk)) shown = shown.concat(a.rows.filter(r => r.k === tk));
+  const rows = shown.map(r => `<tr data-call="${CH.stations[r.k].call}" class="${r.k === tk ? 'target' : ''}">` +
+    `<td><span class="sw" style="background:${color(r.k)}"></span>${name(r.k)} <span class="tag">${CH.stations[r.k].ant[r.m] ?? ''}</span></td>` +
+    `<td>${fmt(r.sky)}</td><td>${fmt(r.gw)}</td><td><b>${fmt(r.t)}</b></td></tr>`).join('');
+  const top = topWinners();
+  const legend = top.slice(0, 8).map(k => `<span><span class="sw" style="background:${color(k)}"></span>${CH.stations[k].call}</span>`).join('') +
+    (top.length > 8 ? `<span class="tag">+${top.length - 8} more</span>` : '');
+  const built = new Date(IDX.generated).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  const wsprLine = !HD ? '' : WSPR === null ? `<div class="tag">Checking live WSPR conditions…</div>`
+    : Object.values(WSPR).some(v => v.delta != null) ? `<div class="tag">Live WSPR correction (this hour): ${Object.entries(WSPR)
+        .filter(([k, v]) => v.delta != null).map(([k, v]) => `${CH.stations[k].call} ${v.delta > 0 ? '+' : ''}${v.delta} dB`).join(', ')}</div>`
+    : '';
+  $('body').innerHTML =
+    `<div class="sub" style="margin-top:8px">${CH.stations.length} stations ${IDX.scope} · ` +
+    `Kp ${HD && HD.kp != null ? HD.kp : '…'} · SSN ${Math.round(IDX.ssn)} · built ${built}</div>` +
+    (target ? `<div class="pill">Target: <b>${target}</b>${tk < 0 ? ' (not on this channel)' : ''}` +
+      `<button id="clear" aria-label="Clear target">✕</button></div>` : '') +
+    `<div class="legend">${legend}</div>` +
+    `<div class="row"><input type="range" id="t" min="0" max="${hours.length - 1}" value="${frame}" aria-label="Time">` +
+    `<span class="time">${localLabel(hours[frame])}<br><span class="tag">${hours[frame].slice(8)}:00 UTC</span></span></div>` +
+    `<div class="verdict">${verdict(a, frame)}</div>${wsprLine}${sparkline()}` +
+    `<table><thead><tr><th>at ${homeName()}, dBµV/m</th><th>sky</th><th>ground</th><th>total</th></tr></thead><tbody>${rows}</tbody></table>` +
+    `<div class="note" style="margin-top:6px">Dashed lines: sunset/sunrise and −12° sun.</div>`;
+  $('t').oninput = e => { frame = +e.target.value; grid.draw(); drawTerminators(); render(); };
+  if ($('clear')) $('clear').onclick = () => setTarget(null);
+  document.querySelectorAll('tbody tr').forEach(tr => tr.onclick = () => setTarget(tr.dataset.call));
+}
+
+function setHash() {
+  if (!CH) return;
+  history.replaceState(null, '', `#${CH.freq}${target ? '/' + encodeURIComponent(target) : ''}@${HOME.lat.toFixed(3)},${HOME.lon.toFixed(3)}`);
+}
+function setTarget(call) { target = call; setHash(); drawStations(); render(); loadWspr(); }
+function say(text) { $('msg').textContent = text || ''; $('msg').hidden = !text; }
+const avail = () => Object.keys(IDX.channels).map(Number).sort((a, b) => a - b);
+const nearest = f => avail().reduce((a, b) => Math.abs(b - f) < Math.abs(a - f) ? b : a);
+
+async function getJSON(url) {
+  const res = await fetch(url, { cache: 'no-cache' });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw Object.assign(new Error(body.error || `HTTP ${res.status}`), { status: res.status });
+  return body;
+}
+const chPath = (freq, file) => `out/builds/${IDX.build}/ch/${freq}/${file}`;
+// The build this page loaded was replaced and pruned: move to the current one.
+async function rebuildSwitch() {
+  const idx = await getJSON('out/index.json');
+  if (idx.build === IDX.build) return say('Data for this channel is missing from the current build.');
+  IDX = idx;
+  $('calls').innerHTML = IDX.calls.map(c => `<option value="${c[0]} ${c[1]} kHz ${c[2]}">`).join('');
+  if (CH) load(CH.freq, target ?? undefined);
+}
+
+async function load(freq, tgt) {
+  if (!avail().includes(freq)) { say(`${freq} kHz isn't in the current build.`); return; }
+  const my = ++loading;
+  $('freq').value = freq;
+  try {
+    const ch = await getJSON(chPath(freq, 'stations.json'));
+    const now = hourKey(new Date());
+    let hs = ch.hours.filter(h => h >= now).slice(0, FRAMES);
+    if (!hs.length) { hs = ch.hours.slice(-FRAMES); say('The build is out of date; showing its last hours.'); } else say('');
+    const views = await Promise.all(hs.map(h => fetch(chPath(freq, `${h}.bin.gz`))
+      .then(r => { if (!r.ok) throw new Error(`missing frame ${h}`); return r.arrayBuffer(); }).then(b => new DataView(b))));
+    if (my !== loading) return;
+    CH = ch; cells = views; hours = hs; HD = null; WSPR = null;
+    if (frame >= hours.length) frame = 0;
+    target = tgt === undefined ? null : tgt;
+    if (!fitted) { fitGrid(); fitted = true; }
+    setHash(); grid.draw(); drawStations(); drawTerminators(); render();
+    await loadHome(my);
+  } catch (e) {
+    if (my !== loading) return;
+    if (e.status === 404) return rebuildSwitch();
+    say(`Couldn't load ${freq} kHz: ${e.message}`);
+  }
+}
+
+async function loadHome(my = loading) {
+  if (!CH) return;
+  HD = null; WSPR = null; render();
+  try {
+    const hd = await getJSON(`api/home?build=${CH.build}&freq=${CH.freq}&lat=${HOME.lat}&lon=${HOME.lon}&start=${hours[0]}&n=${hours.length}`);
+    if (my !== loading) return;
+    HD = hd; render(); loadWspr(my);
+  } catch (e) {
+    if (my !== loading) return;
+    if (e.status === 410) return rebuildSwitch();
+    say(`Couldn't compute levels here: ${e.message}`);
+  }
+}
+
+async function loadWspr(my = loading) {
+  if (!HD || !hours.length || hours[0] !== hourKey(new Date())) { WSPR = {}; return render(); }
+  const rows = homeRows(0), tk = CH.stations.findIndex(s => s.call === target);
+  const idx = [...new Set(rows.slice(0, 5).map(r => r.k).concat(tk >= 0 ? [tk] : []))];
+  WSPR = null; render();
+  try {
+    const res = await getJSON(`api/wspr?build=${CH.build}&freq=${CH.freq}&lat=${HOME.lat}&lon=${HOME.lon}&i=${idx.join(',')}`);
+    if (my !== loading) return;
+    WSPR = res.deltas;
+  } catch (e) { WSPR = {}; }
+  render();
+}
+
+function setHome(lat, lon, nm = null) {
+  HOME = { name: nm, lat: +lat.toFixed(4), lon: +((lon + 540) % 360 - 180).toFixed(4) };
+  saveHome(); setPicking(false); setHash(); drawStations(); loadHome();
+}
+
+function fitGrid() {
+  const G = IDX.grid, wide = map.getSize().x > 640;
+  map.fitBounds([[G.lat0, G.lon0], [G.lat0 + G.nlat * G.step, G.lon0 + G.nlon * G.step]],
+    { paddingTopLeft: [10, 10], paddingBottomRight: wide ? [384, 10] : [10, 10] });
+}
+// A fit done while the container had no size lands at zoom 0; redo it once the map is visible.
+map.on('resize', () => { if (CH && map.getZoom() < 3) fitGrid(); });
+map.on('click', e => { if (picking) setHome(e.latlng.lat, e.latlng.lng); });
+
+function step(dir) {
+  const list = avail(), cur = CH ? CH.freq : +$('freq').value;
+  const next = dir > 0 ? list.find(f => f > cur) : list.slice().reverse().find(f => f < cur);
+  if (next) load(next);
+}
+
+const hover = $('hover');
+let hoverStation = -1;
+function stationCard(k) {
+  const s = CH.stations[k], place = [s.city, s.state].filter(Boolean).join(', ');
+  const ant = ['D', 'N'].map(h => `${h === 'D' ? 'day' : 'night'} ${s.ant[h] ?? 'off'}`).join(' · ');
+  const r = HD && HD.stations.find(r => r.i === k), t = r ? homeRows(frame).find(x => x.k === k) : null;
+  return `<b><span class="sw" style="background:${color(k)}"></span>${s.call}</b> ${place} ${s.country}` +
+    `<div class="tag">${ant}</div>` +
+    (s.note ? `<div class="note">⚠ ${s.note}</div>` : '') +
+    `<div>${Math.round(gcKm(HOME, s))} km from ${homeName()}, bearing ${Math.round(bearingDeg(HOME, s))}°</div>` +
+    `<div>At ${homeName()}: ${t ? fmt(t.t) + ' dBµV/m' : 'not heard'}</div>` +
+    `<div class="tag">${s.call === target ? 'Current target' : 'Click to make it the target'}</div>`;
+}
+map.on('mousemove', e => {
+  if (!CH || !cells[frame]) return;
+  const place = (html) => { hover.innerHTML = html; hover.style.display = 'block';
+    hover.style.left = (e.containerPoint.x + 14) + 'px'; hover.style.top = (e.containerPoint.y + 14) + 'px'; };
+  if (picking) return place('Click to set your location here');
+  if (hoverStation >= 0) return place(stationCard(hoverStation));
+  const G = IDX.grid, i = Math.floor((e.latlng.lat - G.lat0) / G.step), j = Math.floor((e.latlng.lng - G.lon0) / G.step);
+  if (i < 0 || j < 0 || i >= G.nlat || j >= G.nlon) { hover.style.display = 'none'; return; }
+  const info = cell(frame, i * G.nlon + j);
+  place(`<b>${info.best >= 0 ? name(info.best) + ' wins by ' + info.du + ' dB' : 'nothing above noise'}</b>` +
+    info.top.map(([k, v]) => `<div><span class="sw" style="background:${color(k)}"></span>${name(k)} ${v} dBµV/m</div>`).join(''));
+});
+// Leaflet's mouseout doesn't fire reliably when the pointer moves straight onto the panel floating over the map.
+const hideHover = () => { hover.style.display = 'none'; hoverStation = -1; };
+map.on('mouseout', hideHover);
+$('map').addEventListener('mouseleave', hideHover);
+document.querySelector('.panel').addEventListener('mouseenter', hideHover);
+
+$('prev').onclick = () => step(-1);
+$('next').onclick = () => step(1);
+// Typing a full channel loads it right away; Enter/blur snaps anything else to the nearest channel.
+let freqTimer;
+$('freq').oninput = e => {
+  clearTimeout(freqTimer);
+  const f = +e.target.value;
+  if (avail().includes(f) && (!CH || f !== CH.freq)) freqTimer = setTimeout(() => load(f), 250);
+};
+$('freq').onchange = e => {
+  clearTimeout(freqTimer);
+  let f = +e.target.value;
+  if (f && f < 530 && f * 10 >= 530 && f * 10 <= 1700) f *= 10;
+  if (!f) { if (CH) e.target.value = CH.freq; return; }
+  const n = nearest(f);
+  if (!CH || n !== CH.freq) load(n); else e.target.value = n;
+};
+
+function findCall(text, exact) {
+  const q = text.trim().toUpperCase().split(/\s+/)[0];
+  if (!q) return null;
+  const want = text.match(/(\d{3,4})\s*kHz/i);
+  const hits = IDX.calls.filter(c => exact ? c[0].toUpperCase() === q : c[0].toUpperCase().startsWith(q));
+  return (want && hits.find(c => c[1] === +want[1])) || hits.find(c => c[0].toUpperCase() === q) || hits[0] || null;
+}
+function goCall(hit) {
+  $('search').value = ''; say('');
+  hit[1] === (CH && CH.freq) ? setTarget(hit[0]) : load(hit[1], hit[0]);
+}
+// Picking a suggestion jumps immediately; a complete call sign jumps after a short pause
+// (so typing WCB on the way to WCBS doesn't jump early); Enter takes the best prefix match.
+let searchTimer;
+$('search').oninput = e => {
+  clearTimeout(searchTimer);
+  say('');
+  const v = e.target.value, hit = findCall(v, true);
+  if (!hit) return;
+  if (/kHz/i.test(v)) goCall(hit);
+  else searchTimer = setTimeout(() => goCall(hit), 700);
+};
+$('search').onkeydown = e => {
+  if (e.key !== 'Enter') return;
+  clearTimeout(searchTimer);
+  const hit = findCall(e.target.value, false);
+  hit ? goCall(hit) : say(`No station "${e.target.value.trim()}" in the build.`);
+};
+
+function fromHash() {
+  const [path, loc] = location.hash.slice(1).split('@');
+  const [f, t] = path.split('/');
+  if (loc) {
+    const [la, lo] = loc.split(',').map(Number);
+    if (isFinite(la) && isFinite(lo) && (la !== HOME.lat || lo !== HOME.lon)) {
+      HOME = { name: Math.abs(la - DEFAULT_HOME.lat) < 1e-3 && Math.abs(lo - DEFAULT_HOME.lon) < 1e-3 ? DEFAULT_HOME.name : null, lat: la, lon: lo };
+      saveHome();
+      if (CH) { drawStations(); loadHome(); }
+    }
+  }
+  const list = avail();
+  const freq = +f && list.includes(+f) ? +f : (CH ? CH.freq : list.includes(540) ? 540 : list[0]);
+  const tgt = t ? decodeURIComponent(t) : undefined;
+  if (CH && freq === CH.freq) { if ((tgt ?? null) !== target) setTarget(tgt ?? null); }
+  else load(freq, tgt);
+}
+window.addEventListener('hashchange', fromHash);
+
+(async () => {
+  try { IDX = await getJSON('out/index.json'); }
+  catch (e) { return say(`No build available yet (${e.message}). Run: python -m mw_explorer build`); }
+  $('calls').innerHTML = IDX.calls.map(c => `<option value="${c[0]} ${c[1]} kHz ${c[2]}">`).join('');
+  renderLoc();
+  fromHash();
+})();
+</script></body></html>
