@@ -22,6 +22,11 @@ def cmd_build(args):
     build(args.freq, args.hours, args.step, args.workers, args.refresh, exclude, not args.no_ised, not args.no_crt)
 
 
+def cmd_relabel(args):
+    from .build import relabel
+    relabel(not args.no_ised, not args.no_crt)
+
+
 def cmd_serve(args):
     from .server import serve
     if args.open:
@@ -89,6 +94,11 @@ def main():
     b.add_argument("--no-ised", action="store_true", help="skip the ISED check for Canadian stations")
     b.add_argument("--no-crt", action="store_true", help="skip the CRT license check for Mexican stations")
     b.set_defaults(func=cmd_build)
+
+    lb = sub.add_parser("relabel", help="refresh station names and states in the current build, no recompute")
+    lb.add_argument("--no-ised", action="store_true")
+    lb.add_argument("--no-crt", action="store_true")
+    lb.set_defaults(func=cmd_relabel)
 
     s = sub.add_parser("serve", help="serve the explorer and its API")
     s.add_argument("--host", default="127.0.0.1")

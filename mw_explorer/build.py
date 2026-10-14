@@ -258,3 +258,47 @@ def build(freqs=None, hours=48, step=0.5, workers=None, refresh=False, exclude=(
         shutil.rmtree(legacy, ignore_errors=True) if legacy.is_dir() else legacy.unlink(missing_ok=True)
     print(f"Done in {time.time() - t0:.0f}s. {checks[1]}/{checks[0]} directional patterns match FCC RMS "
           f"within 2%.", file=sys.stderr)
+
+
+def relabel(use_ised=True, use_crt=True):
+    """Refresh station names and states in the current build without recomputing its grid.
+
+    Labels don't affect the grid, but frames refer to stations by index, so a channel is only touched
+    when the database still yields the same stations in the same order.
+    """
+    build_id = current_build()
+    if not build_id:
+        sys.exit("No build yet.")
+    out = config.out_dir()
+    root = build_dir(build_id)
+    by_freq, _ = discover(None, None, list(config.CHANNELS), False, set(), use_ised, REGIONS["na"]["stations"],
+                          use_crt)
+    db = pickle.loads((root / "db.pickle").read_bytes())
+    changed = skipped = 0
+    for freq, new in by_freq.items():
+        path = root / "ch" / str(freq) / "stations.json"
+        if not path.exists():
+            continue
+        ch = json.loads(path.read_text())
+        old = ch["stations"]
+        if [(m["call"], m["lat"], m["lon"]) for m in old] != [(st["call"], round(st["lat"], 4), round(st["lon"], 4))
+                                                             for st in new]:
+            skipped += 1
+            continue
+        diff = 0
+        for m, st in zip(old, new):
+            if (m["city"], m["state"]) != (st["city"], st["state"]):
+                m["city"], m["state"] = st["city"], st["state"]
+                diff += 1
+        for st_old, st in zip(db["stations"].get(freq, []), new):
+            st_old["city"], st_old["state"] = st["city"], st["state"]
+        if diff:
+            write_atomic(path, json.dumps(ch, separators=(",", ":")))
+            changed += 1
+    idx = json.loads((out / "index.json").read_text())
+    idx["calls"] = sorted({(st["call"], f, f"{st['city']} {st['state']}".strip())
+                           for f, sts in db["stations"].items() for st in sts})
+    write_atomic(root / "db.pickle", pickle.dumps(db))
+    write_atomic(out / "index.json", json.dumps(idx, separators=(",", ":")))
+    print(f"Relabeled {changed} channels in build {build_id}; {skipped} skipped because their station list "
+          f"changed (the next build picks those up).", file=sys.stderr)
