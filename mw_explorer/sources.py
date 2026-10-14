@@ -156,7 +156,8 @@ def fetch_crt():
             continue
         try:
             out.append({"call": row.get("H", "").strip().upper(), "freq": round(float(row["J"])),
-                        "city": row.get("C", "").title(), "use": row.get("F", "")})
+                        "city": row.get("C", "").title(), "state": row.get("D", "").strip(),
+                        "use": row.get("F", "")})
         except (KeyError, ValueError):
             continue
     return {"file": url.rsplit("/", 1)[-1], "rows": out}

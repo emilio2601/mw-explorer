@@ -15,7 +15,7 @@ from mw_explorer.home import levels_at
 from mw_explorer.model import field_at, hourly_loss, path_terms, takeoff_blend
 from mw_explorer import config
 from mw_explorer.server import BadRequest, Gone, Store, _db, _hours
-from mw_explorer.stations import base_call, build_stations, move_to_licensed_freq
+from mw_explorer.stations import base_call, build_stations, move_to_licensed_freq, mx_state
 
 
 def tower(F, psi, S, orient, G, A=0.0, B=0.0, ref=0):
@@ -128,6 +128,16 @@ class StationTests(unittest.TestCase):
                 dict(row("XEHS", "UNL", 21.0, -101.0, 1, "MX"), freq=740)]
         move_to_licensed_freq(rows, crt)
         self.assertEqual([r["freq"] for r in rows], [1470, 540, 1280, 740])
+
+    def test_mexican_states_use_common_abbreviations(self):
+        self.assertEqual(mx_state("MC", 19.1, "MICHOACÁN DE OCAMPO"), "Mich.")
+        self.assertEqual(mx_state("DF", 24.9, "DURANGO"), "Dgo.")  # CRT beats the FCC's mislabeled code
+        self.assertEqual(mx_state("DF", 19.4, "CIUDAD DE MÉXICO"), "CDMX")
+        self.assertEqual(mx_state("MC", 19.1), "Mich.")
+        self.assertEqual(mx_state("CH", 16.2), "Chis.")
+        self.assertEqual(mx_state("CH", 28.6), "Chih.")
+        self.assertEqual(mx_state("BN", 24.1), "BCS")
+        self.assertEqual(mx_state("BN", 32.5), "BC")
 
 
 class OutputTests(unittest.TestCase):

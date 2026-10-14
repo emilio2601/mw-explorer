@@ -16,6 +16,54 @@ from .sources import (FCC_BAND_URL, FCC_CACHE_DAYS, FCC_FAC_URL, fetch_crt, fetc
 
 DETAIL_MIN_KW = 10
 SAME_STATION_KM = 30
+# ISO 3166-2:MX codes, keyed by state name as the CRT license list writes it (accents and spaces stripped).
+MX_STATES = {
+    "AGUASCALIENTES": "AGU", "BAJACALIFORNIA": "BCN", "BAJACALIFORNIASUR": "BCS", "CAMPECHE": "CAM",
+    "CHIAPAS": "CHP", "CHIHUAHUA": "CHH", "CIUDADDEMEXICO": "CMX", "COAHUILADEZARAGOZA": "COA", "COLIMA": "COL",
+    "DURANGO": "DUR", "GUANAJUATO": "GUA", "GUERRERO": "GRO", "HIDALGO": "HID", "JALISCO": "JAL",
+    "MEXICO": "MEX", "MICHOACANDEOCAMPO": "MIC", "MORELOS": "MOR", "NAYARIT": "NAY", "NUEVOLEON": "NLE",
+    "OAXACA": "OAX", "PUEBLA": "PUE", "QUERETARO": "QUE", "QUINTANAROO": "ROO", "SANLUISPOTOSI": "SLP",
+    "SINALOA": "SIN", "SONORA": "SON", "TABASCO": "TAB", "TAMAULIPAS": "TAM", "TLAXCALA": "TLA",
+    "VERACRUZDEIGNACIODELALLAVE": "VER", "YUCATAN": "YUC", "ZACATECAS": "ZAC",
+}
+# Fallback for Mexican stations without a CRT match. The FCC's own codes are inconsistent (several per
+# state, some shared), so CH and BC/BN are split by latitude: Chiapas vs Chihuahua, and Baja California
+# vs Baja California Sur at 28 N.
+FCC_MX_STATES = {
+    "AG": "AGU", "BS": "BCS", "CA": "CAM", "CM": "CAM", "CP": "CAM", "CS": "CHP", "CI": "CHH", "CO": "COA",
+    "CL": "COL", "DF": "CMX", "DU": "DUR", "DG": "DUR", "GT": "GUA", "GJ": "GUA", "GR": "GRO", "GE": "GRO",
+    "HG": "HID", "HD": "HID", "JA": "JAL", "ME": "MEX", "MX": "MEX", "MC": "MIC", "MI": "MIC", "ML": "MOR",
+    "MO": "MOR", "NA": "NAY", "NL": "NLE", "OA": "OAX", "PU": "PUE", "QE": "QUE", "QR": "ROO", "QI": "ROO",
+    "SL": "SLP", "SI": "SIN", "SO": "SON", "TB": "TAB", "TA": "TAM", "TL": "TLA", "VC": "VER", "VE": "VER",
+    "YC": "YUC", "YU": "YUC", "VA": "YUC", "ZA": "ZAC",
+}
+
+
+# How Mexican state names are usually abbreviated in everyday writing, which is what the explorer shows.
+MX_ABBR = {
+    "AGU": "Ags.", "BCN": "BC", "BCS": "BCS", "CAM": "Camp.", "CHP": "Chis.", "CHH": "Chih.", "CMX": "CDMX",
+    "COA": "Coah.", "COL": "Col.", "DUR": "Dgo.", "GUA": "Gto.", "GRO": "Gro.", "HID": "Hgo.", "JAL": "Jal.",
+    "MEX": "Edomex", "MIC": "Mich.", "MOR": "Mor.", "NAY": "Nay.", "NLE": "NL", "OAX": "Oax.", "PUE": "Pue.",
+    "QUE": "Qro.", "ROO": "Q. Roo", "SLP": "SLP", "SIN": "Sin.", "SON": "Son.", "TAB": "Tab.", "TAM": "Tamps.",
+    "TLA": "Tlax.", "VER": "Ver.", "YUC": "Yuc.", "ZAC": "Zac.",
+}
+
+
+def mx_state_iso(fcc_code, lat, crt_name=None):
+    if crt_name and norm_place(crt_name) in MX_STATES:
+        return MX_STATES[norm_place(crt_name)]
+    if fcc_code == "CH":
+        return "CHP" if lat < 21 else "CHH"
+    if fcc_code in ("BC", "BN"):
+        return "BCN" if lat >= 28 else "BCS"
+    return FCC_MX_STATES.get(fcc_code, "")
+
+
+def mx_state(fcc_code, lat, crt_name=None):
+    iso = mx_state_iso(fcc_code, lat, crt_name)
+    return MX_ABBR.get(iso, iso)
+
+
 REGIONS = {
     "na": {"grid": (14, 70, -168, -52), "stations": (5, 75, -180, -45), "label": "in North America & the Caribbean"},
 }
@@ -82,11 +130,12 @@ def discover(home, max_km, freqs, refresh, exclude=(), use_ised=True, box=None, 
 
     crt = None
     if use_crt and any(r["country"] == "MX" for r in pool):
-        if not fresh(cache.get("crt"), refresh):
+        if not fresh(cache.get("crt"), refresh) or "state" not in (cache["crt"]["rows"] or [{}])[0]:
             try:
                 cache["crt"] = dict(fetch_crt(), fetched=time.time())
             except Exception as e:
-                print(f"CRT fetch failed ({e}); keeping all Mexican notifications.", file=sys.stderr)
+                print(f"CRT fetch failed ({e}); " + ("using the cached license list." if cache.get("crt")
+                      else "keeping all Mexican notifications."), file=sys.stderr)
         crt = cache.get("crt")
     if crt:
         licensed = {(x["call"], x["freq"]) for x in crt["rows"]}
@@ -99,7 +148,8 @@ def discover(home, max_km, freqs, refresh, exclude=(), use_ised=True, box=None, 
             try:
                 cache["ised"] = {"fetched": time.time(), "rows": fetch_ised()}
             except Exception as e:
-                print(f"ISED fetch failed ({e}); keeping all Canadian notifications.", file=sys.stderr)
+                print(f"ISED fetch failed ({e}); " + ("using the cached station data." if cache.get("ised")
+                      else "keeping all Canadian notifications."), file=sys.stderr)
         if cache.get("ised"):
             ised_by_freq = defaultdict(list)
             for x in cache["ised"]["rows"]:
@@ -187,11 +237,14 @@ def discover(home, max_km, freqs, refresh, exclude=(), use_ised=True, box=None, 
     for x in (cache.get("ised") or {}).get("rows", []):
         if x["banner"] == "O":
             ised_ops[round(x["freq"])].append(x)
-    crt_cities = defaultdict(list)
+    crt_cities, crt_states = defaultdict(list), {}
     for x in (crt or {}).get("rows", []):
         crt_cities[(x["call"], x["freq"])].append(x["city"])
+        if x.get("state"):
+            crt_states[(x["call"], x["freq"])] = x["state"]
     overrides = load_overrides()
-    return {f: apply_overrides(build_stations(rows, exclude, f, ised_ops.get(f, []), crt_cities), f, overrides)
+    return {f: apply_overrides(build_stations(rows, exclude, f, ised_ops.get(f, []), crt_cities, crt_states),
+                               f, overrides)
             for f, rows in by_freq.items()}, dropped
 
 
@@ -236,8 +289,8 @@ def base_call(r):
 CALL_FORMS = {"US": r"^[KW][A-Z]{2,3}$", "CA": r"^(C[A-Z]{2,3}(-\d+)?|VO[A-Z]{2})$", "MX": r"^X[EH][A-Z]{1,5}$"}
 
 
-def build_stations(cands, exclude, freq, ised_ops=(), crt_cities=None):
-    crt_cities = crt_cities or {}
+def build_stations(cands, exclude, freq, ised_ops=(), crt_cities=None, crt_states=None):
+    crt_cities, crt_states = crt_cities or {}, crt_states or {}
 
     def close(a, b, km):
         return gc_km(a["lat"], a["lon"], b["lat"], b["lon"]) < km
@@ -331,6 +384,8 @@ def build_stations(cands, exclude, freq, ised_ops=(), crt_cities=None):
               "country": lead["country"], "ant": {}, "site": {}}
         if lead.get("ised_call"):
             st["call"] = lead["ised_call"]
+        if st["country"] == "MX":
+            st["state"] = mx_state(lead["state"], lead["lat"], crt_states.get((st["call"], freq)))
         for slot, codes in (("D", ("DAY", "UNL")), ("N", ("NIG", "UNL"))):
             opts = [r for r in g if r["hours"] in codes]
             if opts:
