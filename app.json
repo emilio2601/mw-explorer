@@ -2,7 +2,7 @@
   "name": "mw-explorer",
   "cron": [
     {
-      "command": "nice -n 19 python3 -m mw_explorer build --workers 3",
+      "command": "nice --adjustment=19 python3 -m mw_explorer build --workers 3",
       "schedule": "15 5 * * *"
     }
   ],
