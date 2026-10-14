@@ -1,0 +1,20 @@
+{
+  "name": "mw-explorer",
+  "cron": [
+    {
+      "command": "nice -n 19 python3 -m mw_explorer build --workers 3",
+      "schedule": "15 5 * * *"
+    }
+  ],
+  "healthchecks": {
+    "web": [
+      {
+        "type": "startup",
+        "name": "web check",
+        "path": "/api/health",
+        "attempts": 5,
+        "description": "Checking if the app responds to /api/health"
+      }
+    ]
+  }
+}
