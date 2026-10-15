@@ -386,8 +386,15 @@ def build_stations(cands, exclude, freq, ised_ops=(), crt_cities=None, crt_state
             st["call"] = lead["ised_call"]
         if st["country"] == "MX":
             st["state"] = mx_state(lead["state"], lead["lat"], crt_states.get((st["call"], freq)))
+        # Foreign stations pile up notifications over the years; each filing describes one setup, so take the
+        # newest filing's day and night records together (older ones only for a mode it lacks). Picking each
+        # mode separately mixed filings: XEUU got a newer filing's day site and an old filing's 0.5 kW night.
+        # US licenses are all current, and separate day and night licenses are real separate sites.
+        by_file = sorted({r["file"] for r in g}, key=lambda f: newest({"kw": 0, "file": f})[1], reverse=True)
         for slot, codes in (("D", ("DAY", "UNL")), ("N", ("NIG", "UNL"))):
             opts = [r for r in g if r["hours"] in codes]
+            if opts and lead["country"] != "US":
+                opts = next([r for r in opts if r["file"] == f] for f in by_file if any(r["file"] == f for r in opts))
             if opts:
                 best = max(opts, key=newest)
                 st["ant"][slot] = Antenna(best["kw"], best["rec"])

@@ -129,6 +129,16 @@ class StationTests(unittest.TestCase):
         move_to_licensed_freq(rows, crt)
         self.assertEqual([r["freq"] for r in rows], [1470, 540, 1280, 740])
 
+    def test_foreign_station_uses_its_newest_filing_for_day_and_night(self):
+        rows = [row("XEUU", "DAY", 19.25, -103.707, 1.0, "MX", file="MX_309301"),
+                row("XEUU", "NIG", 19.25, -103.707, 0.5, "MX", file="MX_309301"),
+                row("XEUU", "DAY", 19.181, -103.672, 1.0, "MX", file="MX_1806921"),
+                row("XEUU", "NIG", 19.181, -103.672, 0.13, "MX", file="MX_1806921")]
+        st = build_stations(rows, set(), 1080)[0]
+        self.assertEqual(st["site"]["D"], st["site"]["N"])
+        self.assertAlmostEqual(st["ant"]["N"].kw, 0.13)
+        self.assertIsNone(st["note"])
+
     def test_mexican_states_use_common_abbreviations(self):
         self.assertEqual(mx_state("MC", 19.1, "MICHOACÁN DE OCAMPO"), "Mich.")
         self.assertEqual(mx_state("DF", 24.9, "DURANGO"), "Dgo.")  # CRT beats the FCC's mislabeled code
