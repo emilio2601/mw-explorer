@@ -215,6 +215,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json(404, {"error": "not found"})
         except BadRequest as e:
             return self.send_json(e.status, {"error": str(e)})
+        except (BrokenPipeError, ConnectionResetError):
+            return  # the browser left before the answer arrived (reload, channel switch)
         except Exception as e:  # keep the server up; report the failure to the client
             self.log_error("%s failed: %r", url.path, e)
             return self.send_json(500, {"error": "internal error"})
