@@ -15,16 +15,22 @@ SSN_URL = "https://services.swpc.noaa.gov/json/solar-cycle/observed-solar-cycle-
 
 
 def fetch_spots(days, mid_lat, mid_lon, dist_km):
-    # Coarse SQL prefilter (arithmetic-mean midpoint box); exact geometry filtered in Python.
+    """Hourly median power-normalized SNR per tx/rx pair on paths near this midpoint and length.
+
+    Coarse SQL prefilter (arithmetic-mean midpoint box); exact geometry is filtered in Python. Pairs report
+    every couple of minutes, so summarizing per hour in the database cuts the rows ~30x (raw spots ran to
+    300k+ rows and took seconds to parse) while moving corrections by well under 1 dB.
+    """
     q = f"""
-        SELECT toUnixTimestamp(time), band, tx_sign, rx_sign,
-               tx_lat, tx_lon, rx_lat, rx_lon, distance, power, snr
+        SELECT toUnixTimestamp(toStartOfHour(time)) + 1800, band, tx_sign, rx_sign,
+               any(tx_lat), any(tx_lon), any(rx_lat), any(rx_lon), any(distance), 0, median(snr - power)
         FROM wspr.rx
         WHERE time > now() - INTERVAL {int(days)} DAY
           AND band IN ({",".join(str(b) for b in BANDS)})
           AND distance BETWEEN {int(dist_km * 0.55)} AND {int(dist_km * 1.45)}
           AND (rx_lat + tx_lat) / 2 BETWEEN {mid_lat - 9} AND {mid_lat + 9}
           AND (rx_lon + tx_lon) / 2 BETWEEN {mid_lon - 12} AND {mid_lon + 12}
+        GROUP BY 1, band, tx_sign, rx_sign
         FORMAT JSONCompact
     """
     data = json.loads(http_get(WSPR_URL + "?" + urllib.parse.urlencode({"query": q})))

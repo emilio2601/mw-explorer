@@ -1,4 +1,5 @@
 """Signal levels from every station on a channel at one receiver location, hour by hour."""
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
 from .geo import bearing, gc_km, solar
@@ -42,13 +43,16 @@ def levels_at(stations, freq, lat, lon, ssn, hours, deltas=None):
 def wspr_deltas(stations, freq, lat, lon, ssn, indices, now=None):
     """Live WSPR skywave correction for the given station indices: {index: {"delta": dB or None, "pairs": n}}."""
     now = now or datetime.now(timezone.utc)
-    out = {}
+    paths = {}
     for k in indices:
-        st = stations[k]
-        terms = path_terms(st, lat, lon, ssn, freq)
-        if terms["d"] < WSPR_MIN_KM:
-            continue
-        px = wspr_proxy(st["call"], terms["mid"], terms["d"], now)
-        out[k] = {"delta": None if px["delta"] is None else round(px["delta"], 1),
-                  "pairs": sum(1 for p in px["pairs"] if p["delta"] is not None)}
-    return out
+        terms = path_terms(stations[k], lat, lon, ssn, freq)
+        if terms["d"] >= WSPR_MIN_KM:
+            paths[k] = terms
+
+    def one(k):
+        px = wspr_proxy(stations[k]["call"], paths[k]["mid"], paths[k]["d"], now)
+        return k, {"delta": None if px["delta"] is None else round(px["delta"], 1),
+                   "pairs": sum(1 for p in px["pairs"] if p["delta"] is not None)}
+    # One wspr.live query per path; run them together so the answer takes about as long as the slowest.
+    with ThreadPoolExecutor(max_workers=max(1, len(paths))) as pool:
+        return dict(pool.map(one, paths))
