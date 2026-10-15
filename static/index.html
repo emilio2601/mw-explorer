@@ -348,9 +348,13 @@ async function getJSON(url) {
 }
 const chPath = (freq, file) => `out/builds/${IDX.build}/ch/${freq}/${file}`;
 // The build this page loaded was replaced and pruned: move to the current one.
-async function rebuildSwitch() {
+async function rebuildSwitch(retried = false) {
   const idx = await getJSON('out/index.json');
-  if (idx.build === IDX.build) return say('Data for this channel is missing from the current build.');
+  if (idx.build === IDX.build) {
+    // Usually a build switching in at that moment; give it a moment once before giving up.
+    if (!retried) { await new Promise(r => setTimeout(r, 3000)); return rebuildSwitch(true); }
+    return say('Data for this channel is missing from the current build.');
+  }
   IDX = idx;
   $('calls').innerHTML = IDX.calls.map(c => `<option value="${c[0]} ${c[1]} kHz ${c[2]}">`).join('');
   if (CH) load(CH.freq, target ?? undefined);
@@ -424,8 +428,8 @@ map.on('click', e => { if (picking) setHome(e.latlng.lat, e.latlng.lng); });
 
 function step(dir) {
   const list = avail(), cur = CH ? CH.freq : +$('freq').value;
-  const next = dir > 0 ? list.find(f => f > cur) : list.slice().reverse().find(f => f < cur);
-  if (next) load(next);
+  const next = dir > 0 ? (list.find(f => f > cur) ?? list[0]) : (list.slice().reverse().find(f => f < cur) ?? list[list.length - 1]);
+  if (next !== cur) load(next);
 }
 
 const hover = $('hover');
