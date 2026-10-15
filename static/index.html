@@ -441,6 +441,17 @@ function stationCard(k) {
     `<div>At ${homeName()}: ${t ? fmt(t.t) + ' dBµV/m' : 'not heard'}</div>` +
     `<div class="tag">${s.call === target ? 'Current target' : 'Click to make it the target'}</div>`;
 }
+// Headline: the gap to the runner-up. The stored margin (leader vs everything else combined) drives the
+// shading; it only shows here when the combined rest outweighs the leader.
+function cellHeadline(info) {
+  if (info.best < 0) return '<b>nothing above noise</b>';
+  const lead = name(info.best);
+  if (info.top.length < 2) return `<b>${lead}, alone</b>`;
+  const gap = info.top[0][1] - info.top[1][1], second = name(info.top[1][0]);
+  const head = gap >= 1 ? `${lead} +${gap} dB over ${second}` : `${lead} ≈ ${second}`;
+  return `<b>${head}</b>` + (info.du < 0 ? '<div class="tag">rest combined is louder</div>' : '');
+}
+
 map.on('mousemove', e => {
   if (!CH || !cells[frame]) return;
   const place = (html) => { hover.innerHTML = html; hover.style.display = 'block';
@@ -450,7 +461,7 @@ map.on('mousemove', e => {
   const G = IDX.grid, i = Math.floor((e.latlng.lat - G.lat0) / G.step), j = Math.floor((e.latlng.lng - G.lon0) / G.step);
   if (i < 0 || j < 0 || i >= G.nlat || j >= G.nlon) { hover.style.display = 'none'; return; }
   const info = cell(frame, i * G.nlon + j);
-  place(`<b>${info.best >= 0 ? name(info.best) + ' wins by ' + info.du + ' dB' : 'nothing above noise'}</b>` +
+  place(cellHeadline(info) +
     info.top.map(([k, v]) => `<div><span class="sw" style="background:${color(k)}"></span>${name(k)} ${v} dBµV/m</div>`).join(''));
 });
 // Leaflet's mouseout doesn't fire reliably when the pointer moves straight onto the panel floating over the map.
