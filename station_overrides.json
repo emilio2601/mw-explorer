@@ -1,5 +1,5 @@
 {
-  "_help": "Reality checks applied on top of FCC data. Station keys are CALL or CALL@kHz. Fields: off (true), keep (true: keep a Mexican station the CRT license list doesn't show), kw (replace licensed power), adjust_db (add dB to the field), note (shown in the explorer). Country entries take adjust_db/off/note and apply to every station from that country unless the station has its own entry.",
+  "_help": "Reality checks applied on top of FCC data. Station keys are CALL or CALL@kHz. Fields: off (true), keep (true: keep a Mexican station the CRT license list doesn't show), site ([lat, lon] for every slot), kw (replace licensed power: a number, or {\"D\": .., \"N\": ..} per slot), adjust_db (add dB to the field), note (shown in the explorer). Country entries take adjust_db/off/note and apply to every station from that country unless the station has its own entry. Top-level \"add\" lists stations the FCC has no record of: call, freq, city, state, country, site [lat, lon], kw {\"D\": .., \"N\": ..} (non-directional; omit a slot the station doesn't run), note.",
   "countries": {
     "CU": {
       "adjust_db": -10,
@@ -14,6 +14,219 @@
     "CMBV@550": {
       "off": true,
       "note": "Listed at 500 kW (Wajay), like CMBX; no evidence Cuba ever ran 500 kW. Treated as a paper allocation."
+    },
+    "XEARZ@1320": {
+      "kw": {
+        "D": 5
+      },
+      "note": "Power from the IFT technical resolution of 2023-04-25 (CRT registry)."
+    },
+    "XEEB@760": {
+      "site": [
+        27.57621,
+        -109.94259
+      ],
+      "note": "Site from the IFT technical resolution of 2023-02-07 (CRT registry)."
+    },
+    "XEGAJ@790": {
+      "kw": {
+        "D": 0.25
+      },
+      "note": "Power from the IFT technical resolution of 2018-11-27 (CRT registry)."
+    },
+    "XEHL@1010": {
+      "site": [
+        20.73636,
+        -103.34774
+      ],
+      "kw": {
+        "D": 50,
+        "N": 4
+      },
+      "note": "Site and power from the IFT technical resolution of 2016-07-01 (CRT registry)."
+    },
+    "XELC@980": {
+      "kw": {
+        "D": 1,
+        "N": 0.2
+      },
+      "note": "Power from the IFT technical resolution of 2015-01-27 (CRT registry)."
+    },
+    "XEMP@710": {
+      "site": [
+        19.31519,
+        -99.08043
+      ],
+      "note": "Site from the IFT technical resolution of 2023-02-07 (CRT registry)."
+    },
+    "XEMR@1140": {
+      "kw": {
+        "D": 20
+      },
+      "note": "Power from the IFT technical resolution of 2024-04-05 (CRT registry)."
+    },
+    "XENQ@640": {
+      "kw": {
+        "D": 25
+      },
+      "note": "Power from the IFT technical resolution of 2016-07-01 (CRT registry)."
+    },
+    "XENV@1340": {
+      "kw": {
+        "D": 1
+      },
+      "note": "Power from the IFT technical resolution of 2024-04-05 (CRT registry)."
+    },
+    "XEQ@940": {
+      "kw": {
+        "D": 30,
+        "N": 30
+      },
+      "note": "Power from the IFT technical resolution of 2015-06-08 (CRT registry)."
+    },
+    "XEQK@1350": {
+      "kw": {
+        "D": 2.5,
+        "N": 0.7
+      },
+      "note": "Power from the IFT technical resolution of 2024-04-05 (CRT registry)."
+    },
+    "XERAM@1310": {
+      "site": [
+        16.61386,
+        -92.54211
+      ],
+      "note": "Site from the IFT technical resolution of 2019-02-21 (CRT registry)."
+    },
+    "XERC@790": {
+      "site": [
+        19.33222,
+        -98.98833
+      ],
+      "note": "Site from the IFT technical resolution of 2022-05-17 (CRT registry)."
+    },
+    "XERED@1110": {
+      "site": [
+        19.31519,
+        -99.08043
+      ],
+      "note": "Site from the IFT technical resolution of 2021-09-09 (CRT registry)."
+    },
+    "XET@990": {
+      "kw": {
+        "D": 10
+      },
+      "note": "Power from the IFT technical resolution of 2024-12-06 (CRT registry)."
+    },
+    "XETUX@1010": {
+      "site": [
+        19.53288,
+        -100.47597
+      ],
+      "kw": {
+        "D": 5
+      },
+      "note": "Site and power from the IFT technical resolution of 2019-06-26 (CRT registry)."
+    },
+    "XEUU@1080": {
+      "site": [
+        19.20484,
+        -103.72319
+      ],
+      "kw": {
+        "N": 0.05
+      },
+      "note": "Site and power from the IFT technical resolution of 2022-12-14 (CRT registry). Night power from the FCC notification for the same site."
+    },
+    "XEVOZ@1590": {
+      "site": [
+        19.67604,
+        -99.10875
+      ],
+      "kw": {
+        "N": 0.9
+      },
+      "note": "Site and power from the IFT technical resolution of 2023-02-20 (CRT registry)."
+    },
+    "XEVREP@1250": {
+      "site": [
+        19.18028,
+        -96.15225
+      ],
+      "note": "Site from the IFT technical resolution of 2024-03-06 (CRT registry)."
+    },
+    "XEW@900": {
+      "site": [
+        19.36505,
+        -98.9577
+      ],
+      "kw": {
+        "D": 100,
+        "N": 100
+      },
+      "note": "Site and power from the IFT technical resolution of 2016-02-10 (CRT registry). The resolution gives day power only; night assumed equal."
+    },
+    "XEX@730": {
+      "site": [
+        19.36505,
+        -98.9577
+      ],
+      "kw": {
+        "D": 60,
+        "N": 60
+      },
+      "note": "Site and power from the IFT technical resolution of 2016-02-02 (CRT registry)."
+    },
+    "XECH@1040": {
+      "off": true,
+      "note": "Frequency returned to the State in 2019 (IFT); the station is FM-only now."
     }
-  }
+  },
+  "add": [
+    {
+      "call": "XECPAC",
+      "freq": 1200,
+      "city": "Jalpan de Serra",
+      "state": "Qro.",
+      "country": "MX",
+      "site": [
+        21.20059,
+        -99.45024
+      ],
+      "kw": {
+        "D": 5
+      },
+      "note": "Not in the FCC's AM list; parameters from the IFT resolution of 2021-02-10 (CRT registry)."
+    },
+    {
+      "call": "XECSCGU",
+      "freq": 1620,
+      "city": "Guachochi",
+      "state": "Chih.",
+      "country": "MX",
+      "site": [
+        26.81944,
+        -107.07
+      ],
+      "kw": {
+        "D": 10
+      },
+      "note": "Not in the FCC's AM list; parameters from the IFT resolution of 2021-01-26 (CRT registry)."
+    },
+    {
+      "call": "XELFFS",
+      "freq": 980,
+      "city": "Izúcar de Matamoros",
+      "state": "Pue.",
+      "country": "MX",
+      "site": [
+        18.61283,
+        -98.47178
+      ],
+      "kw": {
+        "D": 5
+      },
+      "note": "Not in the FCC's AM list; parameters from the IFT resolution of 2023-02-16 (CRT registry)."
+    }
+  ]
 }
