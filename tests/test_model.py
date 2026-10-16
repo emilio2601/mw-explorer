@@ -15,7 +15,7 @@ from mw_explorer.home import levels_at
 from mw_explorer.model import field_at, hourly_loss, path_terms, takeoff_blend
 from mw_explorer import config
 from mw_explorer.server import BadRequest, Gone, Store, _db, _hours
-from mw_explorer.stations import base_call, build_stations, move_to_licensed_freq, mx_state
+from mw_explorer.stations import apply_overrides, base_call, build_stations, move_to_licensed_freq, mx_state
 
 
 def tower(F, psi, S, orient, G, A=0.0, B=0.0, ref=0):
@@ -138,6 +138,25 @@ class StationTests(unittest.TestCase):
         self.assertEqual(st["site"]["D"], st["site"]["N"])
         self.assertAlmostEqual(st["ant"]["N"].kw, 0.13)
         self.assertIsNone(st["note"])
+
+    def test_override_moves_site_and_sets_power_per_slot(self):
+        st = build_stations([row("XEUU", "DAY", 19.18, -103.67, 1.0, "MX"),
+                             row("XEUU", "NIG", 19.18, -103.67, 0.13, "MX")], set(), 1080)
+        rule = {"site": [19.20484, -103.72319], "kw": {"N": 0.05}}
+        st = apply_overrides(st, 1080, {"stations": {"XEUU@1080": rule}})[0]
+        self.assertEqual(st["site"], {"D": (19.20484, -103.72319), "N": (19.20484, -103.72319)})
+        self.assertEqual(st["ant"]["D"].adjust_db, 0)
+        self.assertAlmostEqual(st["ant"]["N"].adjust_db, 10 * math.log10(0.05 / 0.13))
+        self.assertTrue(st["ant"]["N"].label.startswith("0.05 kW"))
+
+    def test_override_adds_station_missing_from_fcc(self):
+        add = {"call": "XECPAC", "freq": 1200, "city": "Jalpan de Serra", "state": "Qro.", "country": "MX",
+               "site": [21.20059, -99.45024], "kw": {"D": 5}}
+        out = apply_overrides([], 1200, {"add": [add]})
+        self.assertEqual(apply_overrides([], 1210, {"add": [add]}), [])
+        self.assertEqual([s["call"] for s in out], ["XECPAC"])
+        self.assertEqual(set(out[0]["ant"]), {"D"})
+        self.assertEqual(out[0]["site"]["D"], (21.20059, -99.45024))
 
     def test_mexican_states_use_common_abbreviations(self):
         self.assertEqual(mx_state("MC", 19.1, "MICHOACÁN DE OCAMPO"), "Mich.")

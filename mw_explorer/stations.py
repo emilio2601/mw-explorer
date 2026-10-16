@@ -268,16 +268,32 @@ def apply_overrides(stations, freq, overrides):
             continue
         if rule.get("off"):
             continue
-        for ant in st["ant"].values():
+        if rule.get("site"):
+            lat, lon = rule["site"]
+            st["site"] = {slot: (lat, lon) for slot in st["site"]}
+            st["lat"], st["lon"] = lat, lon
+            st["note"] = re.sub(r"\s*Separate day and night sites[^.]*\.", "", st.get("note") or "").strip() or None
+        kw = rule.get("kw")
+        for slot, ant in st["ant"].items():
             adj = rule.get("adjust_db", 0)
-            if rule.get("kw"):
-                adj += 10 * math.log10(rule["kw"] / ant.kw)
-            ant.adjust_db = adj
+            slot_kw = kw.get(slot) if isinstance(kw, dict) else kw
+            if slot_kw:
+                ant.label = ant.label.replace(f"{ant.kw:g} kW", f"{slot_kw:g} kW", 1)
+                ant.adjust_db = adj + 10 * math.log10(slot_kw / ant.kw)
+            else:
+                ant.adjust_db = adj
             if adj:
                 ant.label += f" ({adj:+.0f} dB)"
         if rule.get("note"):
             st["note"] = " ".join(filter(None, [rule["note"], st.get("note")]))
         out.append(st)
+    for add in overrides.get("add", []):
+        if add["freq"] != freq:
+            continue
+        lat, lon = add["site"]
+        out.append({"call": add["call"], "city": add["city"], "state": add.get("state", ""), "country": add["country"],
+                    "lat": lat, "lon": lon, "site": {slot: (lat, lon) for slot in add["kw"]},
+                    "ant": {slot: Antenna(kw, None) for slot, kw in add["kw"].items()}, "note": add.get("note")})
     return out
 
 
