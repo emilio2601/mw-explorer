@@ -15,7 +15,8 @@ from mw_explorer.home import levels_at
 from mw_explorer.model import field_at, hourly_loss, path_terms, takeoff_blend
 from mw_explorer import config
 from mw_explorer.server import BadRequest, Gone, Store, _db, _hours
-from mw_explorer.stations import apply_overrides, base_call, build_stations, move_to_licensed_freq, mx_state
+from mw_explorer.stations import (apply_overrides, base_call, build_stations, fix_garbled_calls,
+                                  move_to_licensed_freq, mx_state)
 
 
 def tower(F, psi, S, orient, G, A=0.0, B=0.0, ref=0):
@@ -128,6 +129,12 @@ class StationTests(unittest.TestCase):
                 dict(row("XEHS", "UNL", 21.0, -101.0, 1, "MX"), freq=740)]
         move_to_licensed_freq(rows, crt)
         self.assertEqual([r["freq"] for r in rows], [1470, 540, 1280, 740])
+
+    def test_garbled_mexican_call_is_restored_only_when_licensed(self):
+        rows = [dict(row("SECCCG", "DAY", 23.59, -102.73, 10, "MX"), freq=1020),
+                dict(row("ZECCIZ", "DAY", 19.29, -97.92, 5, "MX"), freq=1480)]
+        fix_garbled_calls(rows, {("XECCCG", 1020)})
+        self.assertEqual([r["call"] for r in rows], ["XECCCG", "ZECCIZ"])
 
     def test_foreign_station_uses_its_newest_filing_for_day_and_night(self):
         rows = [row("XEUU", "DAY", 19.25, -103.707, 1.0, "MX", file="MX_309301"),

@@ -110,6 +110,16 @@ def move_to_licensed_freq(rows, crt_rows):
             r["freq"] = new
 
 
+def fix_garbled_calls(rows, licensed):
+    """Restore Mexican calls the FCC filed with a wrong first letter (SECCCG for XECCCG), in place.
+
+    Only when the corrected call is licensed on that same frequency.
+    """
+    for r in rows:
+        if r["country"] == "MX" and not r["call"].startswith("X") and ("X" + r["call"][1:], r["freq"]) in licensed:
+            r["call"] = "X" + r["call"][1:]
+
+
 def discover(home, max_km, freqs, refresh, exclude=(), use_ised=True, box=None, use_crt=True):
     """Stations per channel: {freq: [station, ...]} plus {freq: {"CALL (CC)", ...} dropped as unlicensed}."""
     cache = load_cache()
@@ -139,6 +149,7 @@ def discover(home, max_km, freqs, refresh, exclude=(), use_ised=True, box=None, 
         crt = cache.get("crt")
     if crt:
         licensed = {(x["call"], x["freq"]) for x in crt["rows"]}
+        fix_garbled_calls(pool, licensed)
         move_to_licensed_freq(pool, crt["rows"])
 
     cands = [r for r in pool if r["freq"] in wanted]
