@@ -125,7 +125,7 @@ def discover(home, max_km, freqs, refresh, exclude=(), use_ised=True, box=None, 
     pool = []
     for r in cache["band"]["rows"]:
         if (r["status"] == "LIC" if r["country"] == "US" else r["status"] == "CP") and in_area(r["lat"], r["lon"]):
-            pool.append(dict(r, country="MX") if r["country"] == "ME" else dict(r))
+            pool.append(dict(r, country="MX") if r["country"] in ("ME", "MA") else dict(r))
     dropped = defaultdict(set)
 
     crt = None
