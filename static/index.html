@@ -366,10 +366,15 @@ async function load(freq, tgt) {
   $('freq').value = freq;
   try {
     const ch = await getJSON(chPath(freq, 'stations.json'));
-    const now = hourKey(new Date());
-    let hs = ch.hours.filter(h => h >= now).slice(0, FRAMES);
-    if (!hs.length) { hs = ch.hours.slice(-FRAMES); say('The build is out of date; showing its last hours.'); } else say('');
-    const views = await Promise.all(hs.map(h => fetch(chPath(freq, `${h}.bin.gz`))
+    // Hours past the end of the build reuse its frame for the same UTC hour a day or more earlier; the map
+    // barely changes from one day to the next, and levels at home are computed for the real hour anyway.
+    const t0 = keyDate(hourKey(new Date())).getTime();
+    const hs = Array.from({ length: FRAMES }, (_, i) => hourKey(new Date(t0 + i * 3600e3)));
+    const src = hs.map(k => ch.hours.includes(k) ? k : ch.hours.findLast(h => h.slice(8) === k.slice(8)));
+    if (src.some(h => !h)) throw new Error('the build has no frames for some hours');
+    const lag = Math.round((keyDate(hs[0]) - keyDate(src[0])) / 86400e3);
+    say(lag ? `Map is ${lag} day${lag > 1 ? 's' : ''} old; levels are current.` : '');
+    const views = await Promise.all(src.map(h => fetch(chPath(freq, `${h}.bin.gz`))
       .then(r => { if (!r.ok) throw new Error(`missing frame ${h}`); return r.arrayBuffer(); }).then(b => new DataView(b))));
     if (my !== loading) return;
     CH = ch; cells = views; hours = hs; HD = null; WSPR = null;
@@ -389,7 +394,7 @@ async function loadHome(my = loading) {
   if (!CH) return;
   HD = null; WSPR = null; render();
   try {
-    const hd = await getJSON(`api/home?build=${CH.build}&freq=${CH.freq}&lat=${HOME.lat}&lon=${HOME.lon}&start=${hours[0]}&n=${hours.length}`);
+    const hd = await getJSON(`api/home?build=${IDX.build}&freq=${CH.freq}&lat=${HOME.lat}&lon=${HOME.lon}&start=${hours[0]}&n=${hours.length}`);
     if (my !== loading) return;
     HD = hd; render(); loadWspr(my);
   } catch (e) {
@@ -405,7 +410,7 @@ async function loadWspr(my = loading) {
   const idx = [...new Set(rows.slice(0, 5).map(r => r.k).concat(tk >= 0 ? [tk] : []))];
   WSPR = null; render();
   try {
-    const res = await getJSON(`api/wspr?build=${CH.build}&freq=${CH.freq}&lat=${HOME.lat}&lon=${HOME.lon}&i=${idx.join(',')}`);
+    const res = await getJSON(`api/wspr?build=${IDX.build}&freq=${CH.freq}&lat=${HOME.lat}&lon=${HOME.lon}&i=${idx.join(',')}`);
     if (my !== loading) return;
     WSPR = res.deltas;
   } catch (e) { WSPR = {}; }
