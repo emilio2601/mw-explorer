@@ -217,17 +217,17 @@ function verdict(a, fi) {
     if (HD.kp != null && HD.kp >= 5 && fi === 0) return 'Geomagnetic storm (Kp≥5): skywave degraded and unstable.';
     const how = `null toward ${a.nul}°/${a.nul + 180}° (loop face or ferrite rod end pointed that way)`;
     if (a.loop >= 0) return `${target} can win at ${hn}: ${how}.`;
-    if (a.loop > -1) return `${target} is about even with everything else at ${hn}: ${how}. Expect fading back and forth.`;
+    if (a.loop > -1) return `${target} is about even with the other stations at ${hn}: ${how}. Expect fading back and forth.`;
     if (a.loop >= -10) return `${target} ~${Math.round(-a.loop)} dB under ${name(a.rival)} & co. even with the ${how}. Peaks possible.`;
     return `${name(a.rival)} & co. bury ${target}: ${Math.round(a.loop)} dB even with the ${how}.`;
   }
   if (!a.rows.length) return 'Nothing modeled above the noise.';
   if (a.margin == null) return `${name(a.rows[0].k)} is alone on the channel.`;
   const lead = name(a.rows[0].k), m = Math.round(a.margin);
-  if (a.margin >= 6) return `${lead} owns ${hn} (+${m} dB over everything else).`;
+  if (a.margin >= 6) return `${lead} owns ${hn} (+${m} dB over the other stations).`;
   if (a.margin >= 1) return `Mush at ${hn}: ${lead} leads by only ${m} dB.`;
   if (a.margin > -1) return `Mush at ${hn}: ${lead} and ${name(a.rows[1].k)} are about even.`;
-  return `Mush at ${hn}: ${lead} is loudest, but everything else combined is ${-m} dB stronger.`;
+  return `Mush at ${hn}: ${lead} is loudest, but the other stations combined are ${-m} dB stronger.`;
 }
 
 function sparkline() {
@@ -245,8 +245,8 @@ function sparkline() {
   let path = '', pen = false;
   ys.forEach((v, i) => { if (v == null) { pen = false; return; } path += `${pen ? 'L' : 'M'}${X(i).toFixed(1)},${Y(v).toFixed(1)}`; pen = true; });
   const cur = ys[frame];
-  return `<div class="note">${target} margin over everything else at ${homeName()}, dB (with best loop null):</div>` +
-    `<svg width="100%" viewBox="0 0 ${w} ${h}" role="img" aria-label="${target} margin over the rest of the channel by hour">
+  return `<div class="note">${target} margin over the other stations on ${CH.freq} at ${homeName()}, dB (with best loop null):</div>` +
+    `<svg width="100%" viewBox="0 0 ${w} ${h}" role="img" aria-label="${target} margin over the other stations on ${CH.freq} by hour">
     ${gridLines}${xt}<path d="${path}" fill="none" stroke="var(--accent)" stroke-width="2"/>
     ${cur == null ? '' : `<circle cx="${X(frame)}" cy="${Y(cur)}" r="4" fill="var(--accent)" stroke="#fff" stroke-width="2"/>
     <text x="${Math.min(X(frame) + 7, w - 30)}" y="${Y(cur) - 6}" style="fill:var(--ink);font-weight:600">${cur > 0 ? '+' : ''}${Math.round(cur)}</text>`}</svg>`;
