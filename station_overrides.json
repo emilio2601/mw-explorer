@@ -180,6 +180,10 @@
     "XECH@1040": {
       "off": true,
       "note": "Frequency returned to the State in 2019 (IFT); the station is FM-only now."
+    },
+    "930MH@930": {
+      "off": true,
+      "note": "Old 500 kW listing for Radio Antilles, Montserrat; the station was destroyed in 1989 (Hurricane Hugo) and never returned."
     }
   },
   "add": [
