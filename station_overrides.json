@@ -184,6 +184,27 @@
     "930MH@930": {
       "off": true,
       "note": "Old 500 kW listing for Radio Antilles, Montserrat; the station was destroyed in 1989 (Hurricane Hugo) and never returned."
+    },
+    "XERF@1570": {
+      "kw": {
+        "D": 100,
+        "N": 100
+      },
+      "note": "100 kW per the IFT 2016 list; its 1987–2017 renewal title says 15 kW, so it may be lower. The FCC still has 250 kW."
+    },
+    "XEG@1050": {
+      "kw": {
+        "D": 100,
+        "N": 100
+      },
+      "note": "100 kW per its 2004–2016 renewal title and the IFT 2016 list; the FCC still has 150 kW."
+    },
+    "XEROK@800": {
+      "kw": {
+        "D": 50,
+        "N": 50
+      },
+      "note": "50 kW per its current renewal title and the IFT 2016 list (once 150 kW); the FCC still has 150 kW."
     }
   },
   "add": [
