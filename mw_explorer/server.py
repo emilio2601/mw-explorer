@@ -203,6 +203,8 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if url.path in ("/", "/index.html"):
                 return self.send_file(config.STATIC_DIR / "index.html", "no-cache")
+            if url.path == "/frame-cache.js":
+                return self.send_file(config.STATIC_DIR / "frame-cache.js", "no-cache")
             if url.path == "/favicon.svg":
                 return self.send_file(config.STATIC_DIR / "favicon.svg", "public, max-age=86400")
             if url.path == "/api/health":

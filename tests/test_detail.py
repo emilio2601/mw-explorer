@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 from mw_explorer import config
 from mw_explorer.build import CELL_BYTES, CELL_FORMAT, build, build_dir, compute_channel
-from mw_explorer.detail import STEP, detail_cells, detail_edges, detail_rows, lon_step, refine, refine_channel
+from mw_explorer.detail import STEP, detail_cells, detail_edges, detail_rows, detail_tiles, lon_step, refine, refine_channel
 from mw_explorer.geo import gc_km
 from mw_explorer.home import levels_at
 from tests.test_model import station
@@ -42,6 +42,24 @@ class GeometryTests(unittest.TestCase):
         self.assertEqual(len(set(combined)), len(combined))
         self.assertLess(len(combined), len(detail_cells(rows)) + len(detail_cells(detail_rows([second]))))
         self.assertEqual(detail_rows([station('AM', 40, -70)]), [])
+
+    def test_whole_coarse_cells_are_filled_without_circular_holes(self):
+        grid = {'lat0': 44, 'lon0': -70, 'step': .5, 'nlat': 4, 'nlon': 4}
+        stations = [tis()]
+        tiles = detail_tiles(stations, grid)
+        rows = detail_rows(stations, grid)
+        selected = {(i, j) for i, first, n, _ in rows for j in range(first, first + n)}
+        self.assertTrue(tiles)
+        self.assertGreater(len(selected), len(detail_cells(detail_rows(stations))))
+        for tile in tiles:
+            y, x = divmod(tile, grid['nlon'])
+            for fy in (.001, .2, .5, .8, .999):
+                for fx in (.001, .2, .5, .8, .999):
+                    lat = grid['lat0'] + (y + fy) * grid['step']
+                    lon = grid['lon0'] + (x + fx) * grid['step']
+                    i = int(lat // STEP)
+                    self.assertIn((i, int((lon + 180) // lon_step(i))), selected)
+        self.assertEqual(detail_rows(stations * 2, grid), rows)
 
     def test_neighbors_stay_adjacent_across_disconnected_runs(self):
         rows = detail_rows([tis(), tis(lon=-75)])
@@ -79,6 +97,7 @@ class DetailBuildTests(unittest.TestCase):
         for hour in self.ctx['hours']:
             data = gzip.decompress((root / (hour + '.detail.bin.gz')).read_bytes())
             self.assertEqual(len(data), len(points) * CELL_BYTES)
+            winners.update(r[0] for r in struct.iter_unpack(CELL_FORMAT, data))
             for index in range(0, len(points), 31):
                 values = struct.unpack_from(CELL_FORMAT, data, index * CELL_BYTES)
                 rows = levels_at(self.stations, 530, *points[index], 100, [hour])

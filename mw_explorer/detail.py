@@ -26,7 +26,7 @@ def lon_step(i):
     return STEP / math.cos(math.radians((i + .5) * STEP))
 
 
-def detail_rows(stations):
+def detail_rows(stations, grid=None):
     """Union of cells covering the neighborhoods of all TIS sites, encoded as row runs."""
     selected = defaultdict(set)
     pad = RADIUS_KM + 111.195 * STEP / math.sqrt(2)
@@ -43,6 +43,16 @@ def detail_rows(stations):
                            math.floor((lon + 180 + reach) / dx) + 1):
                 if gc_km(lat, lon, center, -180 + (j + .5) * dx) <= pad:
                     selected[i].add(j)
+    if grid is not None:
+        tiles = tiles_from_selection(selected, grid)
+        selected = defaultdict(set)
+        for tile in tiles:
+            y, x = divmod(tile, grid['nlon'])
+            south, west = grid['lat0'] + y * grid['step'], grid['lon0'] + x * grid['step']
+            north, east = south + grid['step'], west + grid['step']
+            for i in range(math.floor(south / STEP + 1e-9), math.ceil(north / STEP - 1e-9)):
+                dx = lon_step(i)
+                selected[i].update(range(math.floor((west + 180) / dx), math.ceil((east + 180) / dx)))
     rows, offset = [], 0
     for i, columns in sorted(selected.items()):
         run = []
@@ -56,6 +66,26 @@ def detail_rows(stations):
             rows.append([i, run[0], len(run), offset])
             offset += len(run)
     return rows
+
+
+def tiles_from_selection(selected, grid):
+    tiles = set()
+    for i, columns in selected.items():
+        y = math.floor(((i + .5) * STEP - grid['lat0']) / grid['step'])
+        if not 0 <= y < grid['nlat']:
+            continue
+        for j in columns:
+            x = math.floor((-180 + (j + .5) * lon_step(i) - grid['lon0']) / grid['step'])
+            if 0 <= x < grid['nlon']:
+                tiles.add(y * grid['nlon'] + x)
+    return sorted(tiles)
+
+
+def detail_tiles(stations, grid):
+    selected = defaultdict(set)
+    for i, first, n, _ in detail_rows(stations):
+        selected[i].update(range(first, first + n))
+    return tiles_from_selection(selected, grid)
 
 
 def detail_cells(rows):
@@ -137,7 +167,8 @@ def assemble_detail(task, rows):
         st['coarse_wins'] = st.get('coarse_wins', st['wins'])
         st['wins'] = round(wins.get(k, 0), 6)
         st['color'] = colors.get(k)
-    ch['detail'] = {'version': 1, 'step': STEP, 'radius_km': RADIUS_KM, 'rows': rows, 'cells': count}
+    ch['detail'] = {'version': 2, 'step': STEP, 'radius_km': RADIUS_KM, 'rows': rows, 'cells': count,
+                    'coarse': detail_tiles(stations, ctx['grid'])}
     write_atomic(out / 'stations.json', json.dumps(ch, separators=(',', ':')))
     return freq, count
 
@@ -151,7 +182,7 @@ def batch_tasks(task, rows):
 def refine_channel(task):
     if task[2]['grid']['step'] <= STEP:
         return task[0], 0
-    rows = detail_rows(task[1])
+    rows = detail_rows(task[1], task[2]['grid'])
     if not rows:
         return task[0], 0
     for batch in batch_tasks(task, rows):
@@ -164,7 +195,7 @@ def refine_channels(tasks, workers=None):
     for task in tasks:
         if task[2]['grid']['step'] <= STEP:
             continue
-        rows = detail_rows(task[1])
+        rows = detail_rows(task[1], task[2]['grid'])
         if not rows:
             continue
         prepared[task[0]] = (task, rows)

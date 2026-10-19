@@ -71,13 +71,14 @@
   <div id="body"></div>
 </div>
 <div id="hover"></div>
+<script src="/frame-cache.js"></script>
 <script>
 const COLORS_OTHER = '#b4b2a9', NULL_DEPTH = 20, FRAMES = 25, CELL = 12;
 const DEFAULT_HOME = { name: 'NYC', lat: 40.71, lon: -74.01 };
-let IDX = null, CH = null, cells = [], hours = [], frame = 0, target = null, loading = 0;
+let IDX = null, CH = null, hours = [], frame = 0, target = null, loading = 0;
 const DETAIL_ZOOM = 7;
-let detailGeneration = 0;
-let detailViews = new Map(), detailRequests = new Set(), detailRows = new Map(), sourceHours = [];
+let frameStore = null, channelRequest = null;
+let detailRows = new Map(), detailTiles = new Set(), sourceHours = [];
 let HOME = savedHome(), HD = null, WSPR = null, picking = false;
 const $ = id => document.getElementById(id);
 const R = Math.PI / 180;
@@ -170,7 +171,13 @@ function decodeCell(v, c) {
   return { best: best === 0xFFFF ? -1 : best, du: v.getInt8(o + 2), top };
 }
 
-const cell = (fi, c) => decodeCell(cells[fi], c);
+const frameView = (detail = false) => frameStore?.get(sourceHours[frame], detail);
+const cell = (fi, c) => decodeCell(frameStore.get(sourceHours[fi]), c);
+function selectFrame() {
+  if (!CH || !frameStore) return;
+  const local = !!CH.detail && map.getZoom() >= DETAIL_ZOOM;
+  frameStore.select(sourceHours[frame], local, [sourceHours[frame + 1], sourceHours[frame - 1]]);
+}
 const detailLonStep = i => CH.detail.step / Math.cos((i + 0.5) * CH.detail.step * R);
 function detailIndex(lat, lon) {
   if (!CH.detail) return -1;
@@ -178,67 +185,72 @@ function detailIndex(lat, lon) {
   const run = (detailRows.get(i) || []).find(r => j >= r[1] && j < r[1] + r[2]);
   return run ? run[3] + j - run[1] : -1;
 }
-async function loadDetail(fi) {
-  if (!CH.detail || detailGeneration !== loading || map.getZoom() < DETAIL_ZOOM) return;
-  const hour = sourceHours[fi];
-  if (detailViews.has(hour) || detailRequests.has(hour)) return;
-  const my = loading, channel = CH, freq = CH.freq, count = CH.detail.cells;
-  detailRequests.add(hour);
-  try {
-    const res = await fetch(chPath(freq, `${hour}.detail.bin.gz`));
-    if (!res.ok) throw Object.assign(new Error(`HTTP ${res.status}`), { status: res.status });
-    const buf = await res.arrayBuffer();
-    if (buf.byteLength !== count * CELL) throw new Error('incomplete local coverage frame');
-    if (my !== loading || CH !== channel) return;
-    detailViews.set(hour, new DataView(buf));
-    hideHover(); grid.draw();
-  } catch (e) {
-    if (my !== loading || CH !== channel) return;
-    if (e.status === 404) return rebuildSwitch();
-    detailRequests.delete(hour);
-    say(`Couldn't load local coverage: ${e.message}`);
-  }
-}
 
 const Grid = L.Layer.extend({
   onAdd(m) { this._c = L.DomUtil.create('canvas', 'leaflet-zoom-hide');
     m.getPanes().overlayPane.appendChild(this._c); m.on('moveend zoomend resize', this.draw, this); this.draw(); },
   onRemove(m) { this._c.remove(); m.off('moveend zoomend resize', this.draw, this); },
   draw() {
-    if (!this._c || !CH || !cells[frame]) return;
-    const c = this._c, size = map.getSize(), G = IDX.grid;
+    if (!this._c || !CH) return;
+    const c = this._c, size = map.getSize(), G = IDX?.grid;
     L.DomUtil.setPosition(c, map.containerPointToLayerPoint([0, 0]));
     c.width = size.x; c.height = size.y;
-    const ctx = c.getContext('2d'), RGB = CH.stations.map((s, k) => rgb(color(k)));
+    const ctx = c.getContext('2d'), coarse = frameView();
+    const status = $('frame-status');
+    if (status) status.textContent = !coarse ? 'Loading coverage…'
+      : CH.detail && map.getZoom() >= DETAIL_ZOOM && !frameView(true) ? 'Loading local coverage…' : '';
+    if (!coarse) { c.dataset.coverage = 'loading'; return; }
+    const RGB = CH.stations.map((s, k) => rgb(color(k)));
     const bounds = map.getBounds(), south = bounds.getSouth(), north = bounds.getNorth();
     const west = bounds.getWest(), east = bounds.getEast();
-    const paint = (v, index, lat, lon, dy, dx, replace = false) => {
+    const rect = (lat, lon, dy, dx) => {
       const a = map.latLngToContainerPoint([lat + dy, lon]), b = map.latLngToContainerPoint([lat, lon + dx]);
-      if (replace) ctx.clearRect(a.x, a.y, b.x - a.x + 0.5, b.y - a.y + 0.5);
+      const x = Math.round(a.x), y = Math.round(a.y);
+      return [x, y, Math.round(b.x) - x, Math.round(b.y) - y];
+    };
+    const paint = (v, index, lat, lon, dy, dx) => {
       const info = decodeCell(v, index);
       if (info.best < 0) return;
       const alpha = Math.max(0.12, Math.min(0.7, 0.12 + info.du / 20 * 0.58));
       const [r, g, bl] = RGB[info.best];
       ctx.fillStyle = `rgba(${r},${g},${bl},${alpha})`;
-      ctx.fillRect(a.x, a.y, b.x - a.x + 0.5, b.y - a.y + 0.5);
+      ctx.fillRect(...rect(lat, lon, dy, dx));
     };
+    const local = map.getZoom() >= DETAIL_ZOOM && frameView(true);
+    const whole = local && CH.detail.coarse;
     for (let i = Math.max(0, Math.floor((south - G.lat0) / G.step)); i < Math.min(G.nlat, Math.ceil((north - G.lat0) / G.step)); i++)
       for (let j = Math.max(0, Math.floor((west - G.lon0) / G.step)); j < Math.min(G.nlon, Math.ceil((east - G.lon0) / G.step)); j++)
-        paint(cells[frame], i * G.nlon + j, G.lat0 + i * G.step, G.lon0 + j * G.step, G.step, G.step);
-    const local = map.getZoom() >= DETAIL_ZOOM && detailViews.get(sourceHours[frame]);
+        if (!whole || !detailTiles.has(i * G.nlon + j))
+          paint(coarse, i * G.nlon + j, G.lat0 + i * G.step, G.lon0 + j * G.step, G.step, G.step);
     c.dataset.coverage = local ? 'local' : 'continental';
-    if (local) for (const [i, first, n, offset] of CH.detail.rows) {
-      const lat = i * CH.detail.step, dx = detailLonStep(i);
-      if (lat > north || lat + CH.detail.step < south) continue;
-      const start = Math.max(first, Math.floor((west + 180) / dx));
-      const end = Math.min(first + n, Math.ceil((east + 180) / dx));
-      for (let j = start; j < end; j++)
-        paint(local, offset + j - first, lat, -180 + j * dx, CH.detail.step, dx, true);
+    if (local) {
+      ctx.save();
+      ctx.beginPath();
+      if (whole) for (const tile of CH.detail.coarse) {
+        const i = Math.floor(tile / G.nlon), j = tile % G.nlon;
+        ctx.rect(...rect(G.lat0 + i * G.step, G.lon0 + j * G.step, G.step, G.step));
+      }
+      else for (const [i, first, n] of CH.detail.rows) {
+        const dx = detailLonStep(i);
+        ctx.rect(...rect(i * CH.detail.step, -180 + first * dx, CH.detail.step, n * dx));
+      }
+      ctx.clip();
+      // Clear the old format in one pass; clearing individual cells erased neighboring rows.
+      if (!whole) ctx.clearRect(0, 0, c.width, c.height);
+      for (const [i, first, n, offset] of CH.detail.rows) {
+        const lat = i * CH.detail.step, dx = detailLonStep(i);
+        if (lat > north || lat + CH.detail.step < south) continue;
+        const start = Math.max(first, Math.floor((west + 180) / dx));
+        const end = Math.min(first + n, Math.ceil((east + 180) / dx));
+        for (let j = start; j < end; j++)
+          paint(local, offset + j - first, lat, -180 + j * dx, CH.detail.step, dx);
+      }
+      ctx.restore();
     }
-    loadDetail(frame);
   }
 });
 const grid = new Grid().addTo(map);
+map.on('zoomend', selectFrame);
 
 // Levels at home for one hour, with the live WSPR correction applied to skywave in the first hour.
 function homeRows(fi) {
@@ -383,10 +395,11 @@ function render() {
     `<div class="legend">${legend}</div>` +
     `<div class="row"><input type="range" id="t" min="0" max="${hours.length - 1}" value="${frame}" aria-label="Time">` +
     `<span class="time">${localLabel(hours[frame])}<br><span class="tag">${hours[frame].slice(8)}:00 UTC</span></span></div>` +
+    `<div id="frame-status" class="tag" role="status"></div>` +
     `<div class="verdict">${verdict(a, frame)}</div>${wsprLine}${sparkline()}` +
     `<table><thead><tr><th>at ${homeName()}, dBµV/m</th><th>sky</th><th>ground</th><th>total</th></tr></thead><tbody>${rows}</tbody></table>` +
     `<div class="note" style="margin-top:6px">Dashed lines: sunset/sunrise and −12° sun.</div>`;
-  $('t').oninput = e => { frame = +e.target.value; grid.draw(); drawTerminators(); render(); };
+  $('t').oninput = e => { frame = +e.target.value; hideHover(); selectFrame(); drawTerminators(); render(); grid.draw(); };
   if ($('clear')) $('clear').onclick = () => setTarget(null);
   document.querySelectorAll('tbody tr').forEach(tr => tr.onclick = () => setTarget(tr.dataset.call));
 }
@@ -400,8 +413,8 @@ function say(text) { $('msg').textContent = text || ''; $('msg').hidden = !text;
 const avail = () => Object.keys(IDX.channels).map(Number).sort((a, b) => a - b);
 const nearest = f => avail().reduce((a, b) => Math.abs(b - f) < Math.abs(a - f) ? b : a);
 
-async function getJSON(url) {
-  const res = await fetch(url, { cache: 'no-cache' });
+async function getJSON(url, signal) {
+  const res = await fetch(url, { cache: 'no-cache', signal });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw Object.assign(new Error(body.error || `HTTP ${res.status}`), { status: res.status });
   return body;
@@ -423,9 +436,14 @@ async function rebuildSwitch(retried = false) {
 async function load(freq, tgt) {
   if (!avail().includes(freq)) { say(`${freq} kHz isn't in the current build.`); return; }
   const my = ++loading;
+  channelRequest?.abort();
+  channelRequest = new AbortController();
+  const signal = channelRequest.signal;
+  frameStore?.close(); frameStore = null;
+  hideHover(); grid.draw();
   $('freq').value = freq;
   try {
-    const ch = await getJSON(chPath(freq, 'stations.json'));
+    const ch = await getJSON(chPath(freq, 'stations.json'), signal);
     // Hours past the end of the build reuse its frame for the same UTC hour a day or more earlier; the map
     // barely changes from one day to the next, and levels at home are computed for the real hour anyway.
     const t0 = keyDate(hourKey(new Date())).getTime();
@@ -434,19 +452,23 @@ async function load(freq, tgt) {
     if (src.some(h => !h)) throw new Error('the build has no frames for some hours');
     const lag = Math.round((keyDate(hs[0]) - keyDate(src[0])) / 86400e3);
     say(lag ? `Map is ${lag} day${lag > 1 ? 's' : ''} old; levels are current.` : '');
-    const views = await Promise.all(src.map(h => fetch(chPath(freq, `${h}.bin.gz`))
-      .then(r => { if (!r.ok) throw new Error(`missing frame ${h}`); return r.arrayBuffer(); }).then(b => new DataView(b))));
     if (my !== loading) return;
-    CH = ch; cells = views; hours = hs; HD = null; WSPR = null;
-    detailGeneration = my; sourceHours = src; detailViews = new Map(); detailRequests = new Set(); detailRows = new Map();
+    CH = ch; hours = hs; HD = null; WSPR = null;
+    sourceHours = src; detailRows = new Map(); detailTiles = new Set(ch.detail?.coarse || []);
     for (const row of ch.detail?.rows || []) {
       if (!detailRows.has(row[0])) detailRows.set(row[0], []);
       detailRows.get(row[0]).push(row);
     }
+    frameStore = new CoverageFrames({
+      base: chPath(freq, '').replace(/\/$/, ''),
+      coarseBytes: IDX.grid.nlat * IDX.grid.nlon * CELL, detailBytes: (ch.detail?.cells || 0) * CELL,
+      onLoad: () => { if (my === loading) { hideHover(); grid.draw(); } },
+      onError: e => { if (my !== loading) return; if (e.status === 404) rebuildSwitch(); else say(`Couldn't load coverage: ${e.message}`); }
+    });
     if (frame >= hours.length) frame = 0;
     target = tgt === undefined ? null : tgt;
     if (!fitted) { fitGrid(); fitted = true; }
-    setHash(); grid.draw(); drawStations(); drawTerminators(); render();
+    setHash(); selectFrame(); drawStations(); drawTerminators(); render(); grid.draw();
     await loadHome(my);
   } catch (e) {
     if (my !== loading) return;
@@ -529,15 +551,15 @@ function cellHeadline(info) {
 }
 
 map.on('mousemove', e => {
-  if (!CH || !cells[frame]) return;
+  if (!CH || !frameView()) return;
   const place = (html) => { hover.innerHTML = html; hover.style.display = 'block';
     hover.style.left = (e.containerPoint.x + 14) + 'px'; hover.style.top = (e.containerPoint.y + 14) + 'px'; };
   if (picking) return place('Click to set your location here');
   if (hoverStation >= 0) return place(stationCard(hoverStation));
   const G = IDX.grid, i = Math.floor((e.latlng.lat - G.lat0) / G.step), j = Math.floor((e.latlng.lng - G.lon0) / G.step);
   if (i < 0 || j < 0 || i >= G.nlat || j >= G.nlon) { hover.style.display = 'none'; return; }
-  const local = map.getZoom() >= DETAIL_ZOOM && detailViews.get(sourceHours[frame]);
-  const index = local ? detailIndex(e.latlng.lat, e.latlng.lng) : -1;
+  const local = map.getZoom() >= DETAIL_ZOOM && frameView(true);
+  const index = local && (!CH.detail.coarse || detailTiles.has(i * G.nlon + j)) ? detailIndex(e.latlng.lat, e.latlng.lng) : -1;
   const info = index >= 0 ? decodeCell(local, index) : cell(frame, i * G.nlon + j);
   place(cellHeadline(info) +
     info.top.map(([k, v]) => `<div><span class="sw" style="background:${color(k)}"></span>${name(k)} ${v} dBµV/m</div>`).join(''));

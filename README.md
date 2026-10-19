@@ -47,7 +47,8 @@ cached for 30 days in `data/cache/`. A full build uses a 0.5° grid covering 48 
 several hundred MB. Build time depends on the available CPU cores; use `--workers` to limit parallelism. Two builds are kept.
 
 For a smaller build, use `--freq 540` to select a channel or `--step 1.0` for a coarser grid.
-At zoom level 7 and above, the map loads 1.85 km cells covering a 20 km neighborhood around each
+At zoom level 7 and above, the map replaces coarse cells near TIS sites with 1.85 km cells.
+Refinement covers entire coarse cells intersecting a 20 km neighborhood around each
 TIS site. Overlapping neighborhoods share cells, and each cell includes interference from all
 stations on the channel. Other areas use the continental grid.
 
@@ -59,7 +60,9 @@ Allow space for the temporary archive during refresh.
 
 `python3 -m mw_explorer refine --workers 3` adds local TIS detail to an existing build without
 recomputing the continental frames. Regular builds include both resolutions. Detail is computed in
-batches to limit memory use, and the browser downloads each local frame as needed.
+batches to limit memory use. The browser loads the selected hour first, then prefetches the
+adjacent hours. Changing channels or scrubbing the timeline cancels obsolete requests. Frames
+use gzip compression and a bounded browser cache.
 
 ## Layout
 
