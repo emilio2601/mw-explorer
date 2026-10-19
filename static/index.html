@@ -75,6 +75,9 @@
 const COLORS_OTHER = '#b4b2a9', NULL_DEPTH = 20, FRAMES = 25, CELL = 12;
 const DEFAULT_HOME = { name: 'NYC', lat: 40.71, lon: -74.01 };
 let IDX = null, CH = null, cells = [], hours = [], frame = 0, target = null, loading = 0;
+const DETAIL_ZOOM = 7;
+let detailGeneration = 0;
+let detailViews = new Map(), detailRequests = new Set(), detailRows = new Map(), sourceHours = [];
 let HOME = savedHome(), HD = null, WSPR = null, picking = false;
 const $ = id => document.getElementById(id);
 const R = Math.PI / 180;
@@ -158,13 +161,43 @@ function terminator(s, elev, lon0, lon1) {
   return pts;
 }
 
-function cell(fi, c) {
-  const v = cells[fi], o = c * CELL, best = v.getUint16(o, true), top = [];
+function decodeCell(v, c) {
+  const o = c * CELL, best = v.getUint16(o, true), top = [];
   for (let i = 0; i < 3; i++) {
     const k = v.getUint16(o + 3 + i * 3, true);
     if (k !== 0xFFFF) top.push([k, v.getInt8(o + 5 + i * 3)]);
   }
   return { best: best === 0xFFFF ? -1 : best, du: v.getInt8(o + 2), top };
+}
+
+const cell = (fi, c) => decodeCell(cells[fi], c);
+const detailLonStep = i => CH.detail.step / Math.cos((i + 0.5) * CH.detail.step * R);
+function detailIndex(lat, lon) {
+  if (!CH.detail) return -1;
+  const i = Math.floor(lat / CH.detail.step), j = Math.floor((lon + 180) / detailLonStep(i));
+  const run = (detailRows.get(i) || []).find(r => j >= r[1] && j < r[1] + r[2]);
+  return run ? run[3] + j - run[1] : -1;
+}
+async function loadDetail(fi) {
+  if (!CH.detail || detailGeneration !== loading || map.getZoom() < DETAIL_ZOOM) return;
+  const hour = sourceHours[fi];
+  if (detailViews.has(hour) || detailRequests.has(hour)) return;
+  const my = loading, channel = CH, freq = CH.freq, count = CH.detail.cells;
+  detailRequests.add(hour);
+  try {
+    const res = await fetch(chPath(freq, `${hour}.detail.bin.gz`));
+    if (!res.ok) throw Object.assign(new Error(`HTTP ${res.status}`), { status: res.status });
+    const buf = await res.arrayBuffer();
+    if (buf.byteLength !== count * CELL) throw new Error('incomplete local coverage frame');
+    if (my !== loading || CH !== channel) return;
+    detailViews.set(hour, new DataView(buf));
+    hideHover(); grid.draw();
+  } catch (e) {
+    if (my !== loading || CH !== channel) return;
+    if (e.status === 404) return rebuildSwitch();
+    detailRequests.delete(hour);
+    say(`Couldn't load local coverage: ${e.message}`);
+  }
 }
 
 const Grid = L.Layer.extend({
@@ -177,16 +210,32 @@ const Grid = L.Layer.extend({
     L.DomUtil.setPosition(c, map.containerPointToLayerPoint([0, 0]));
     c.width = size.x; c.height = size.y;
     const ctx = c.getContext('2d'), RGB = CH.stations.map((s, k) => rgb(color(k)));
-    for (let i = 0; i < G.nlat; i++) for (let j = 0; j < G.nlon; j++) {
-      const info = cell(frame, i * G.nlon + j);
-      if (info.best < 0) continue;
-      const lat = G.lat0 + i * G.step, lon = G.lon0 + j * G.step;
-      const a = map.latLngToContainerPoint([lat + G.step, lon]), b = map.latLngToContainerPoint([lat, lon + G.step]);
+    const bounds = map.getBounds(), south = bounds.getSouth(), north = bounds.getNorth();
+    const west = bounds.getWest(), east = bounds.getEast();
+    const paint = (v, index, lat, lon, dy, dx, replace = false) => {
+      const a = map.latLngToContainerPoint([lat + dy, lon]), b = map.latLngToContainerPoint([lat, lon + dx]);
+      if (replace) ctx.clearRect(a.x, a.y, b.x - a.x + 0.5, b.y - a.y + 0.5);
+      const info = decodeCell(v, index);
+      if (info.best < 0) return;
       const alpha = Math.max(0.12, Math.min(0.7, 0.12 + info.du / 20 * 0.58));
       const [r, g, bl] = RGB[info.best];
       ctx.fillStyle = `rgba(${r},${g},${bl},${alpha})`;
       ctx.fillRect(a.x, a.y, b.x - a.x + 0.5, b.y - a.y + 0.5);
+    };
+    for (let i = Math.max(0, Math.floor((south - G.lat0) / G.step)); i < Math.min(G.nlat, Math.ceil((north - G.lat0) / G.step)); i++)
+      for (let j = Math.max(0, Math.floor((west - G.lon0) / G.step)); j < Math.min(G.nlon, Math.ceil((east - G.lon0) / G.step)); j++)
+        paint(cells[frame], i * G.nlon + j, G.lat0 + i * G.step, G.lon0 + j * G.step, G.step, G.step);
+    const local = map.getZoom() >= DETAIL_ZOOM && detailViews.get(sourceHours[frame]);
+    c.dataset.coverage = local ? 'local' : 'continental';
+    if (local) for (const [i, first, n, offset] of CH.detail.rows) {
+      const lat = i * CH.detail.step, dx = detailLonStep(i);
+      if (lat > north || lat + CH.detail.step < south) continue;
+      const start = Math.max(first, Math.floor((west + 180) / dx));
+      const end = Math.min(first + n, Math.ceil((east + 180) / dx));
+      for (let j = start; j < end; j++)
+        paint(local, offset + j - first, lat, -180 + j * dx, CH.detail.step, dx, true);
     }
+    loadDetail(frame);
   }
 });
 const grid = new Grid().addTo(map);
@@ -389,6 +438,11 @@ async function load(freq, tgt) {
       .then(r => { if (!r.ok) throw new Error(`missing frame ${h}`); return r.arrayBuffer(); }).then(b => new DataView(b))));
     if (my !== loading) return;
     CH = ch; cells = views; hours = hs; HD = null; WSPR = null;
+    detailGeneration = my; sourceHours = src; detailViews = new Map(); detailRequests = new Set(); detailRows = new Map();
+    for (const row of ch.detail?.rows || []) {
+      if (!detailRows.has(row[0])) detailRows.set(row[0], []);
+      detailRows.get(row[0]).push(row);
+    }
     if (frame >= hours.length) frame = 0;
     target = tgt === undefined ? null : tgt;
     if (!fitted) { fitGrid(); fitted = true; }
@@ -482,7 +536,9 @@ map.on('mousemove', e => {
   if (hoverStation >= 0) return place(stationCard(hoverStation));
   const G = IDX.grid, i = Math.floor((e.latlng.lat - G.lat0) / G.step), j = Math.floor((e.latlng.lng - G.lon0) / G.step);
   if (i < 0 || j < 0 || i >= G.nlat || j >= G.nlon) { hover.style.display = 'none'; return; }
-  const info = cell(frame, i * G.nlon + j);
+  const local = map.getZoom() >= DETAIL_ZOOM && detailViews.get(sourceHours[frame]);
+  const index = local ? detailIndex(e.latlng.lat, e.latlng.lng) : -1;
+  const info = index >= 0 ? decodeCell(local, index) : cell(frame, i * G.nlon + j);
   place(cellHeadline(info) +
     info.top.map(([k, v]) => `<div><span class="sw" style="background:${color(k)}"></span>${name(k)} ${v} dBµV/m</div>`).join(''));
 });

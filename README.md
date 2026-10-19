@@ -43,19 +43,23 @@ python3 -m unittest                   # tests
 ```
 
 The first build fetches about 3,000 FCC facility pages plus the ISED and CRT files. Downloads are
-cached for 30 days in `data/cache/`. A full build uses a 0.5° grid covering 48 hours, writes about
-400 MB and peaks around 0.3 GB of memory per worker. Build time depends on the available CPU
-cores; use `--workers` to limit parallelism. Two builds are kept.
+cached for 30 days in `data/cache/`. A full build uses a 0.5° grid covering 48 hours and writes
+several hundred MB. Build time depends on the available CPU cores; use `--workers` to limit parallelism. Two builds are kept.
 
 For a smaller build, use `--freq 540` to select a channel or `--step 1.0` for a coarser grid.
-The coarser grid can miss small stations' local coverage.
+At zoom level 7 and above, the map loads 1.85 km cells covering a 20 km neighborhood around each
+TIS site. Overlapping neighborhoods share cells, and each cell includes interference from all
+stations on the channel. Other areas use the continental grid.
 
 The first build also downloads the [FCC ULS land-mobile archive](https://data.fcc.gov/download/pub/uls/complete/l_LMpriv.zip)
 (about 424 MB). It streams to a temporary file and caches only the parsed TIS records in
 `data/cache/uls_tis.json` for seven days. Refresh failures reuse the last good cache; an initial
 failure stops the build. `--refresh` refreshes all sources, and `--no-uls` omits TIS stations.
-Allow space for the temporary archive during refresh. Small TIS coverage areas may fall between
-the default grid cells; station markers and levels at your chosen location still include them.
+Allow space for the temporary archive during refresh.
+
+`python3 -m mw_explorer refine --workers 3` adds local TIS detail to an existing build without
+recomputing the continental frames. Regular builds include both resolutions. Detail is computed in
+batches to limit memory use, and the browser downloads each local frame as needed.
 
 ## Layout
 
@@ -67,6 +71,7 @@ the default grid cells; station markers and levels at your chosen location still
 | `mw_explorer/antenna.py` | antenna patterns |
 | `mw_explorer/model.py` | skywave and groundwave field strength |
 | `mw_explorer/build.py` | daily build: grid frames per channel and hour |
+| `mw_explorer/detail.py` | sparse local coverage grids around TIS sites |
 | `mw_explorer/home.py` | levels at any location (used by the API and `report`) |
 | `mw_explorer/live.py` | Kp, sunspot number, WSPR |
 | `mw_explorer/server.py` | HTTP server and API |

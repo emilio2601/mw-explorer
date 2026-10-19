@@ -27,6 +27,11 @@ def cmd_relabel(args):
     relabel(not args.no_ised, not args.no_crt, not args.no_uls)
 
 
+def cmd_refine(args):
+    from .detail import refine
+    refine(args.workers)
+
+
 def cmd_serve(args):
     from .server import serve
     if args.open:
@@ -101,6 +106,10 @@ def main():
     b.add_argument("--no-crt", action="store_true", help="skip the CRT license check for Mexican stations")
     b.add_argument("--no-uls", action="store_true", help="omit ULS travelers’ information stations")
     b.set_defaults(func=cmd_build)
+
+    detail = sub.add_parser("refine", help="add local TIS coverage to the current build")
+    detail.add_argument("--workers", type=int, default=None)
+    detail.set_defaults(func=cmd_refine)
 
     lb = sub.add_parser("relabel", help="refresh station names and states in the current build, no recompute")
     lb.add_argument("--no-ised", action="store_true")

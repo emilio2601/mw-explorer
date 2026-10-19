@@ -54,7 +54,7 @@ def grid_cells(g):
             for i in range(g["nlat"]) for j in range(g["nlon"])]
 
 
-def assign_colors(wins, bests, nlat, nlon):
+def assign_colors(wins, bests, nlat, nlon, detail_bests=(), edges=()):
     """Give every winning station a palette color, reusing colors only between areas that never touch.
 
     Like coloring a political map: bigger winners choose first, so they keep the same colors run to run,
@@ -72,6 +72,12 @@ def assign_colors(wins, bests, nlat, nlon):
                     if b >= 0 and b != a:
                         touch[a][b] += 1
                         touch[b][a] += 1
+    for best in detail_bests:
+        for x, y in edges:
+            a, b = best[x], best[y]
+            if a >= 0 and b >= 0 and a != b:
+                touch[a][b] += 1
+                touch[b][a] += 1
     color_of = {}
     for k in sorted(wins, key=lambda k: -wins[k]):
         clash = defaultdict(int)
@@ -82,12 +88,9 @@ def assign_colors(wins, bests, nlat, nlon):
     return color_of
 
 
-def compute_channel(task):
-    """Grid frames for one channel; writes the hour files and returns the station metadata."""
-    freq, stations, ctx = task
-    t0 = time.time()
-    g = ctx["grid"]
-    cells = grid_cells(g)
+def compute_frames(stations, ctx, cells):
+    """Evaluate every co-channel station at the supplied cell centers, one frame at a time."""
+    freq = ctx["freq"]
     # Per station and mode, only what each hour needs, in flat arrays: a dict of path terms per station and
     # cell takes gigabytes on busy channels (over 4 GB for ~215 stations at 0.5 degrees).
     per = []
@@ -104,8 +107,7 @@ def compute_channel(task):
                 mla.append(terms["mid" + m][0])
                 mlo.append(terms["mid" + m][1])
         per.append(arrs)
-    out = build_dir(ctx["build"]) / "ch" / str(freq)
-    wins, bests = defaultdict(int), []
+    wins = defaultdict(int)
     for key in ctx["hours"]:
         sol = solar(datetime.strptime(key, HOUR_FMT).replace(tzinfo=timezone.utc))
         total = [0.0] * len(cells)
@@ -128,7 +130,6 @@ def compute_channel(task):
                     t.sort(reverse=True)
         buf = bytearray(CELL_BYTES * len(cells))
         frame_best = [-1] * len(cells)
-        bests.append(frame_best)
         for c in range(len(cells)):
             top = tops[c]
             if top and top[0][0] >= NOISE_DBU:
@@ -142,7 +143,23 @@ def compute_channel(task):
             top = top + [(0, 0xFFFF)] * (3 - len(top))
             struct.pack_into(CELL_FORMAT, buf, c * CELL_BYTES, best, max(-128, min(127, round(du))),
                              *(x for v, k in top for x in (k, max(-128, min(127, round(v))))))
-        write_atomic(out / f"{key}.bin.gz", gzip.compress(bytes(buf), 6))
+        yield key, bytes(buf), frame_best, wins
+        wins = defaultdict(int)
+
+
+def compute_channel(task):
+    """Build continental frames and local TIS detail for one channel."""
+    freq, stations, ctx = task
+    ctx = dict(ctx, freq=freq)
+    t0 = time.time()
+    g = ctx["grid"]
+    out = build_dir(ctx["build"]) / "ch" / str(freq)
+    wins, bests = defaultdict(int), []
+    for key, buf, best, counts in compute_frames(stations, ctx, grid_cells(g)):
+        write_atomic(out / f"{key}.bin.gz", gzip.compress(buf, 6))
+        bests.append(best)
+        for k, count in counts.items():
+            wins[k] += count
 
     color_of = assign_colors(wins, bests, g["nlat"], g["nlon"])
     meta = [{"id": st.get("id", st["call"]), "service": st.get("service", "AM"), "uls": st.get("uls"),
@@ -154,6 +171,10 @@ def compute_channel(task):
     write_atomic(out / "stations.json", json.dumps({"freq": freq, "build": ctx["build"], "ssn": ctx["ssn"],
                                                     "hours": ctx["hours"], "stations": meta},
                                                    separators=(",", ":")))
+    del bests
+    from .detail import refine_channel
+    if ctx.get("detail", True):
+        refine_channel((freq, stations, ctx))
     das = [a for st in stations for a in st["ant"].values() if a.rms_check]
     ok = sum(1 for a in das if abs(a.rms_check[0] / a.rms_check[1] - 1) <= 0.02)
     return freq, len(stations), time.time() - t0, (len(das), ok)
@@ -206,7 +227,7 @@ def build(freqs=None, hours=48, step=0.5, workers=None, refresh=False, exclude=(
     grid = {"lat0": lat0, "lon0": lon0, "step": step,
             "nlat": int((lat1 - lat0) / step), "nlon": int((lon1 - lon0) / step)}
     build_id = now.strftime(HOUR_FMT) + "-" + str(int(time.time()))
-    ctx = {"ssn": ssn, "grid": grid, "build": build_id,
+    ctx = {"ssn": ssn, "grid": grid, "build": build_id, "detail": False,
            "hours": [hour_key(now + timedelta(hours=i)) for i in range(hours)]}
 
     # Cap disk at two builds: clear anything older than the current one (and any crashed build) before
@@ -224,6 +245,9 @@ def build(freqs=None, hours=48, step=0.5, workers=None, refresh=False, exclude=(
             checks[0] += nda
             checks[1] += ok
             print(f"  [{n}/{len(tasks)}] {f} kHz: {ns} stations, {dt:.0f}s", file=sys.stderr)
+
+    from .detail import refine_channels
+    refine_channels(tasks, workers)
 
     out = config.out_dir()
     prev = current_build()
