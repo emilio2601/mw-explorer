@@ -421,11 +421,15 @@ async function getJSON(url, signal) {
 }
 const chPath = (freq, file) => `out/builds/${IDX.build}/ch/${freq}/${file}`;
 // The build this page loaded was replaced and pruned: move to the current one.
-async function rebuildSwitch(retried = false) {
+let rebuildPromise = null;
+function rebuildSwitch() {
+  return rebuildPromise ||= refreshBuild().finally(() => { rebuildPromise = null; });
+}
+async function refreshBuild(retried = false) {
   const idx = await getJSON('out/index.json');
   if (idx.build === IDX.build) {
     // Usually a build switching in at that moment; give it a moment once before giving up.
-    if (!retried) { await new Promise(r => setTimeout(r, 3000)); return rebuildSwitch(true); }
+    if (!retried) { await new Promise(r => setTimeout(r, 3000)); return refreshBuild(true); }
     return say('Data for this channel is missing from the current build.');
   }
   IDX = idx;

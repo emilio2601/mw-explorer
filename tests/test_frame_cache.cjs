@@ -105,3 +105,23 @@ test('cache memory stays bounded across the timeline', async () => {
     }
   } finally { cache.close(); }
 });
+test('simultaneous missing coarse and fine frames share one build refresh', async () => {
+  const html = fs.readFileSync('static/index.html', 'utf8');
+  const recovery = html.slice(html.indexOf('let rebuildPromise = null;'), html.indexOf('\nasync function load(freq'));
+  let finish, reads = 0;
+  const loads = [], notices = [];
+  const recover = vm.runInNewContext(recovery + '\nrebuildSwitch', {
+    IDX: { build: 'old' }, CH: { freq: 530 }, target: null,
+    getJSON: () => { reads++; return new Promise(resolve => { finish = resolve; }); },
+    $: () => ({}), esc: x => x, callOption: x => x,
+    load: (...args) => loads.push(args), say: text => notices.push(text), setTimeout
+  });
+  const coarse = recover(), fine = recover();
+  assert.equal(coarse, fine);
+  assert.equal(reads, 1);
+  finish({ build: 'new', calls: [] });
+  await Promise.all([coarse, fine]);
+  assert.equal(loads.length, 1);
+  assert.equal(loads[0][0], 530);
+  assert.deepEqual(notices, []);
+});
