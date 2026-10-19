@@ -145,7 +145,8 @@ def compute_channel(task):
         write_atomic(out / f"{key}.bin.gz", gzip.compress(bytes(buf), 6))
 
     color_of = assign_colors(wins, bests, g["nlat"], g["nlon"])
-    meta = [{"call": st["call"], "city": st["city"], "state": st["state"], "country": st["country"],
+    meta = [{"id": st.get("id", st["call"]), "service": st.get("service", "AM"), "uls": st.get("uls"),
+             "call": st["call"], "city": st["city"], "state": st["state"], "country": st["country"],
              "lat": round(st["lat"], 4), "lon": round(st["lon"], 4),
              "sites": {h: [round(x, 4) for x in site] for h, site in st["site"].items()},
              "ant": {h: a.label for h, a in st["ant"].items()}, "note": st.get("note"),
@@ -191,10 +192,10 @@ def prune(keep):
             shutil.rmtree(d, ignore_errors=True)
 
 
-def build(freqs=None, hours=48, step=0.5, workers=None, refresh=False, exclude=(), use_ised=True, use_crt=True):
+def build(freqs=None, hours=48, step=0.5, workers=None, refresh=False, exclude=(), use_ised=True, use_crt=True, use_uls=True):
     freqs = list(freqs or config.CHANNELS)
     region = REGIONS["na"]
-    by_freq, dropped = discover(None, None, freqs, refresh, set(exclude), use_ised, region["stations"], use_crt)
+    by_freq, dropped = discover(None, None, freqs, refresh, set(exclude), use_ised, region["stations"], use_crt, use_uls)
     by_freq = {f: s for f, s in by_freq.items() if s}
     print(f"Dropped {sum(len(v) for v in dropped.values())} notifications with no current license "
           f"(ISED for Canada, CRT for Mexico), no call sign, or a deleted call.", file=sys.stderr)
@@ -245,7 +246,7 @@ def build(freqs=None, hours=48, step=0.5, workers=None, refresh=False, exclude=(
     channels = {str(f): len(s) for f, s in by_freq.items()}
     if partial:
         channels = {**old.get("channels", {}), **channels}
-    calls = sorted({(st["call"], f, f"{st['city']} {st['state']}".strip()) for f, s in by_freq.items() for st in s})
+    calls = sorted({(st["call"], f, f"{st['city']} {st['state']}".strip(), st.get("id", st["call"])) for f, s in by_freq.items() for st in s})
     old_calls = [c for c in old.get("calls", []) if partial and str(c[1]) not in {str(f) for f in by_freq}]
     write_atomic(out / "index.json", json.dumps({
         "build": build_id, "generated": datetime.now(timezone.utc).isoformat(), "ssn": ssn, "ssn_src": ssn_src,
@@ -260,7 +261,7 @@ def build(freqs=None, hours=48, step=0.5, workers=None, refresh=False, exclude=(
           f"within 2%.", file=sys.stderr)
 
 
-def relabel(use_ised=True, use_crt=True):
+def relabel(use_ised=True, use_crt=True, use_uls=True):
     """Refresh station names and states in the current build without recomputing its grid.
 
     Labels don't affect the grid, but frames refer to stations by index, so a channel is only touched
@@ -272,7 +273,7 @@ def relabel(use_ised=True, use_crt=True):
     out = config.out_dir()
     root = build_dir(build_id)
     by_freq, _ = discover(None, None, list(config.CHANNELS), False, set(), use_ised, REGIONS["na"]["stations"],
-                          use_crt)
+                          use_crt, use_uls)
     db = pickle.loads((root / "db.pickle").read_bytes())
     changed = skipped = 0
     for freq, new in by_freq.items():
@@ -281,7 +282,7 @@ def relabel(use_ised=True, use_crt=True):
             continue
         ch = json.loads(path.read_text())
         old = ch["stations"]
-        if [(m["call"], m["lat"], m["lon"]) for m in old] != [(st["call"], round(st["lat"], 4), round(st["lon"], 4))
+        if [(m.get("id", m["call"]), m["lat"], m["lon"]) for m in old] != [(st.get("id", st["call"]), round(st["lat"], 4), round(st["lon"], 4))
                                                              for st in new]:
             skipped += 1
             continue
@@ -296,7 +297,7 @@ def relabel(use_ised=True, use_crt=True):
             write_atomic(path, json.dumps(ch, separators=(",", ":")))
             changed += 1
     idx = json.loads((out / "index.json").read_text())
-    idx["calls"] = sorted({(st["call"], f, f"{st['city']} {st['state']}".strip())
+    idx["calls"] = sorted({(st["call"], f, f"{st['city']} {st['state']}".strip(), st.get("id", st["call"]))
                            for f, sts in db["stations"].items() for st in sts})
     write_atomic(root / "db.pickle", pickle.dumps(db))
     write_atomic(out / "index.json", json.dumps(idx, separators=(",", ":")))

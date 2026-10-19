@@ -88,3 +88,58 @@ class Antenna:
         g = vertical_factor(self.shortest, math.radians(el))
         q = max(0.025 * g * self.e_rss, 10 * g * math.sqrt(self.kw))
         return max(1e-6, scale * 1.05 * math.hypot(self.k * self._unscaled(az, el), q))
+
+
+class TISAntenna:
+    """Approximate short-vertical pattern scaled by ULS power and antenna data.
+
+    ULS tip/center heights describe installation height, not radiating length.
+    They must not be substituted for the electrical tower height in Antenna.
+    Multiple authorizations at a site are treated as alternatives, not summed.
+    """
+
+    def __init__(self, antennas):
+        self.adjust_db = 0.0
+        self.rms_check = None
+        self.notes = []
+        fields, powers = [], []
+        for ant in antennas:
+            power, erp = ant.get('power_w'), ant.get('erp_w')
+            gain, loss = ant.get('gain_db'), ant.get('line_loss_db')
+            if power:
+                powers.append(power)
+            if gain is not None and not -60 <= gain <= 20:
+                gain = None
+                self.notes.append('Implausible antenna gain ignored.')
+            if loss is not None and not 0 <= loss <= 60:
+                loss = None
+                self.notes.append('Invalid line loss ignored.')
+            if power and gain is not None:
+                # Land-mobile gain is interpreted relative to a dipole for ERP estimation.
+                effective = power * 10 ** ((gain - (loss or 0)) / 10)
+                if erp:
+                    effective = min(effective, erp)
+                field = math.sqrt(30 * 1.64 * effective)
+                self.notes.append('Power modeled from output and gain (dBd).')
+                if loss is None:
+                    self.notes.append('Default feedline loss: 0 dB.')
+            elif erp:
+                field = math.sqrt(30 * 1.64 * erp)
+                self.notes.append('Using listed ERP.')
+            else:
+                # Ideal short monopole over perfect ground, directivity 3; efficiency unknown.
+                field = math.sqrt(90 * power * 10 ** (-(loss or 0) / 10))
+                self.notes.append('Power modeled with an ideal short vertical.')
+            fields.append(field)
+            beam = ant.get('beamwidth_deg')
+            if beam is not None and 0 < beam < 360:
+                self.notes.append('Omnidirectional model.')
+            if ant.get('polarization') not in (None, '', 'V'):
+                self.notes.append('Vertical polarization model.')
+        self.k_omni = max(fields)
+        self.kw = max(powers, default=max(a.get('erp_w') or 0 for a in antennas)) / 1000
+        self.label = f'{self.kw * 1000:g} W TIS' + (' (ERP)' if not powers else '')
+        self.notes = list(dict.fromkeys(self.notes))
+
+    def field(self, az, el):
+        return max(1e-6, self.k_omni * abs(math.cos(math.radians(el))) * 10 ** (self.adjust_db / 20))

@@ -94,7 +94,13 @@ let fitted = false;
 
 const color = k => CH.stations[k].color || COLORS_OTHER;
 const rgb = c => [1, 3, 5].map(i => parseInt(c.slice(i, i + 2), 16));
-const name = k => CH.stations[k].call + (CH.stations[k].color ? '' : ` (${CH.stations[k].country})`);
+const esc = text => String(text).replace(/[&<>"']/g, c => ({'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'}[c]));
+const stationId = s => s.id || s.call;
+const stationLabel = s => s.call + (s.uls ? ` · site ${s.uls.location}` : '');
+const targetIndex = () => !CH || target == null ? -1 : CH.stations.findIndex(s => stationId(s) === target || s.call === target);
+const targetName = () => { const k = targetIndex(); return esc(k < 0 ? target : stationLabel(CH.stations[k])); };
+const name = k => esc(stationLabel(CH.stations[k])) + (CH.stations[k].color ? '' : ` (${CH.stations[k].country})`);
+const callOption = c => `${c[0]} ${c[1]} kHz ${c[2]}${c[3] && c[3].includes('~') ? ' · site ' + c[3].split('~').pop() : ''}`;
 const psum = a => a.length ? 10 * Math.log10(a.reduce((s, v) => s + 10 ** (v / 10), 0)) : null;
 const fmt = v => v == null ? '—' : Math.round(v);
 const hourKey = d => d.toISOString().slice(0, 13).replace(/[-T]/g, '');
@@ -199,7 +205,7 @@ function homeRows(fi) {
 function analysis(fi) {
   const rows = homeRows(fi), out = { rows };
   if (rows.length > 1) out.margin = rows[0].t - psum(rows.slice(1).map(r => r.t));
-  const tk = target == null ? -1 : CH.stations.findIndex(s => s.call === target);
+  const tk = targetIndex();
   const tr = rows.find(r => r.k === tk);
   if (!tr) return out;
   const rivals = rows.filter(r => r !== tr);
@@ -218,13 +224,13 @@ function verdict(a, fi) {
   const hn = homeName();
   if (!HD) return 'Loading levels at your location…';
   if (target != null) {
-    if (a.t == null || a.t < IDX.noise) return `${target} below the noise at ${hn}.`;
+    if (a.t == null || a.t < IDX.noise) return `${targetName()} below the noise at ${hn}.`;
     if (HD.kp != null && HD.kp >= 5 && fi === 0) return 'Geomagnetic storm (Kp≥5): skywave degraded and unstable.';
     const how = `null toward ${a.nul}°/${a.nul + 180}° (loop face or ferrite rod end pointed that way)`;
-    if (a.loop >= 0) return `${target} can win at ${hn}: ${how}.`;
-    if (a.loop > -1) return `${target} is about even with the other stations at ${hn}: ${how}. Expect fading back and forth.`;
-    if (a.loop >= -10) return `${target} ~${Math.round(-a.loop)} dB under ${name(a.rival)} & co. even with the ${how}. Peaks possible.`;
-    return `${name(a.rival)} & co. bury ${target}: ${Math.round(a.loop)} dB even with the ${how}.`;
+    if (a.loop >= 0) return `${targetName()} can win at ${hn}: ${how}.`;
+    if (a.loop > -1) return `${targetName()} is about even with the other stations at ${hn}: ${how}. Expect fading back and forth.`;
+    if (a.loop >= -10) return `${targetName()} ~${Math.round(-a.loop)} dB under ${name(a.rival)} & co. even with the ${how}. Peaks possible.`;
+    return `${name(a.rival)} & co. bury ${targetName()}: ${Math.round(a.loop)} dB even with the ${how}.`;
   }
   if (!a.rows.length) return 'Nothing modeled above the noise.';
   if (a.margin == null) return `${name(a.rows[0].k)} is alone on the channel.`;
@@ -250,8 +256,8 @@ function sparkline() {
   let path = '', pen = false;
   ys.forEach((v, i) => { if (v == null) { pen = false; return; } path += `${pen ? 'L' : 'M'}${X(i).toFixed(1)},${Y(v).toFixed(1)}`; pen = true; });
   const cur = ys[frame];
-  return `<div class="note">${target} margin over the other stations on ${CH.freq} at ${homeName()}, dB (with best loop null):</div>` +
-    `<svg width="100%" viewBox="0 0 ${w} ${h}" role="img" aria-label="${target} margin over the other stations on ${CH.freq} by hour">
+  return `<div class="note">${targetName()} margin over the other stations on ${CH.freq} at ${homeName()}, dB (with best loop null):</div>` +
+    `<svg width="100%" viewBox="0 0 ${w} ${h}" role="img" aria-label="${targetName()} margin over the other stations on ${CH.freq} by hour">
     ${gridLines}${xt}<path d="${path}" fill="none" stroke="var(--accent)" stroke-width="2"/>
     ${cur == null ? '' : `<circle cx="${X(frame)}" cy="${Y(cur)}" r="4" fill="var(--accent)" stroke="#fff" stroke-width="2"/>
     <text x="${Math.min(X(frame) + 7, w - 30)}" y="${Y(cur) - 6}" style="fill:var(--ink);font-weight:600">${cur > 0 ? '+' : ''}${Math.round(cur)}</text>`}</svg>`;
@@ -264,7 +270,7 @@ function topWinners() {
 function drawStations() {
   stLayer.clearLayers();
   if (!CH) return;
-  const tk = CH.stations.findIndex(s => s.call === target), top8 = new Set(topWinners().slice(0, 8));
+  const tk = targetIndex(), top8 = new Set(topWinners().slice(0, 8));
   CH.stations.forEach((s, k) => {
     const isT = k === tk, big = s.wins >= hours.length || isT;
     if (isT || top8.has(k)) L.polyline(gc(HOME, s), { color: isT ? '#0b0b0b' : color(k), weight: isT ? 2.5 : 1.5,
@@ -274,7 +280,7 @@ function drawStations() {
     if (big) m.bindTooltip(s.call, { permanent: true, direction: 'right', className: 'lbl', offset: [6, 0] });
     m.on('mouseover', () => { hoverStation = k; });
     m.on('mouseout', () => { hoverStation = -1; });
-    m.on('click', () => { if (!picking) setTarget(s.call); });
+    m.on('click', () => { if (!picking) setTarget(stationId(s)); });
     m.addTo(stLayer);
   });
   L.circleMarker([HOME.lat, HOME.lon], { radius: 6, color: '#0b0b0b', weight: 2, fillColor: '#fff', fillOpacity: 1 })
@@ -306,10 +312,10 @@ function setPicking(on) { picking = on; $('map').classList.toggle('picking', on)
 function render() {
   renderLoc();
   if (!CH) return;
-  const a = analysis(frame), tk = CH.stations.findIndex(s => s.call === target);
+  const a = analysis(frame), tk = targetIndex();
   let shown = a.rows.slice(0, 8);
   if (tk >= 0 && !shown.some(r => r.k === tk)) shown = shown.concat(a.rows.filter(r => r.k === tk));
-  const rows = shown.map(r => `<tr data-call="${CH.stations[r.k].call}" class="${r.k === tk ? 'target' : ''}">` +
+  const rows = shown.map(r => `<tr data-call="${stationId(CH.stations[r.k])}" class="${r.k === tk ? 'target' : ''}">` +
     `<td><span class="sw" style="background:${color(r.k)}"></span>${name(r.k)} <span class="tag">${CH.stations[r.k].ant[r.m] ?? ''}</span></td>` +
     `<td>${fmt(r.sky)}</td><td>${fmt(r.gw)}</td><td><b>${fmt(r.t)}</b></td></tr>`).join('');
   const top = topWinners();
@@ -323,7 +329,7 @@ function render() {
   $('body').innerHTML =
     `<div class="sub" style="margin-top:8px">${CH.stations.length} stations ${IDX.scope} · ` +
     `Kp ${HD && HD.kp != null ? HD.kp : '…'} · SSN ${Math.round(IDX.ssn)} · built ${built}</div>` +
-    (target ? `<div class="pill">Target: <b>${target}</b>${tk < 0 ? ' (not on this channel)' : ''}` +
+    (target ? `<div class="pill">Target: <b>${targetName()}</b>${tk < 0 ? ' (not on this channel)' : ''}` +
       `<button id="clear" aria-label="Clear target">✕</button></div>` : '') +
     `<div class="legend">${legend}</div>` +
     `<div class="row"><input type="range" id="t" min="0" max="${hours.length - 1}" value="${frame}" aria-label="Time">` +
@@ -361,7 +367,7 @@ async function rebuildSwitch(retried = false) {
     return say('Data for this channel is missing from the current build.');
   }
   IDX = idx;
-  $('calls').innerHTML = IDX.calls.map(c => `<option value="${c[0]} ${c[1]} kHz ${c[2]}">`).join('');
+  $('calls').innerHTML = IDX.calls.map(c => `<option value="${esc(callOption(c))}">`).join('');
   if (CH) load(CH.freq, target ?? undefined);
 }
 
@@ -411,7 +417,7 @@ async function loadHome(my = loading) {
 
 async function loadWspr(my = loading) {
   if (!HD || !hours.length || hours[0] !== hourKey(new Date())) { WSPR = {}; return render(); }
-  const rows = homeRows(0), tk = CH.stations.findIndex(s => s.call === target);
+  const rows = homeRows(0), tk = targetIndex();
   const idx = [...new Set(rows.slice(0, 5).map(r => r.k).concat(tk >= 0 ? [tk] : []))];
   WSPR = null; render();
   try {
@@ -448,12 +454,14 @@ function stationCard(k) {
   const s = CH.stations[k], place = [s.city, s.state].filter(Boolean).join(', ');
   const ant = ['D', 'N'].map(h => `${h === 'D' ? 'day' : 'night'} ${s.ant[h] ?? 'off'}`).join(' · ');
   const r = HD && HD.stations.find(r => r.i === k), t = r ? homeRows(frame).find(x => x.k === k) : null;
-  return `<b><span class="sw" style="background:${color(k)}"></span>${s.call}</b> ${place} ${s.country}` +
+  return `<b><span class="sw" style="background:${color(k)}"></span>${esc(stationLabel(s))}</b> ${esc(place)} ${s.country}` +
     `<div class="tag">${ant}</div>` +
-    (s.note ? `<div class="note">⚠ ${s.note}</div>` : '') +
+    (s.uls ? `<div class="note">${esc(s.uls.licensee)} · site ${esc(s.uls.location)}</div>` +
+      s.uls.antennas.map(a => `<div class="tag">Antenna ${esc(a.number)}: ${a.power_w == null ? 'output unknown' : a.power_w + ' W output'}${a.erp_w == null ? '' : ', ' + a.erp_w + ' W ERP'}${a.gain_db == null ? '' : ', gain ' + a.gain_db + ' dB'}${a.height_tip_m == null ? '' : ', tip ' + a.height_tip_m + ' m AGL'}</div>`).join('') : '') +
+    (s.note ? `<div class="note">${s.uls ? '' : '⚠ '}${esc(s.note)}</div>` : '') +
     `<div>${Math.round(gcKm(HOME, s))} km from ${homeName()}, bearing ${Math.round(bearingDeg(HOME, s))}°</div>` +
     `<div>At ${homeName()}: ${t ? fmt(t.t) + ' dBµV/m' : 'not heard'}</div>` +
-    `<div class="tag">${s.call === target ? 'Current target' : 'Click to make it the target'}</div>`;
+    `<div class="tag">${k === targetIndex() ? 'Current target' : 'Click to make it the target'}</div>`;
 }
 // Headline: the gap to the runner-up. The stored margin (leader vs everything else combined) drives the
 // shading; it only shows here when the combined rest outweighs the leader.
@@ -503,6 +511,8 @@ $('freq').onchange = e => {
 };
 
 function findCall(text, exact) {
+  const chosen = IDX.calls.find(c => callOption(c).toUpperCase() === text.trim().toUpperCase());
+  if (chosen) return chosen;
   const q = text.trim().toUpperCase().split(/\s+/)[0];
   if (!q) return null;
   const want = text.match(/(\d{3,4})\s*kHz/i);
@@ -511,7 +521,7 @@ function findCall(text, exact) {
 }
 function goCall(hit) {
   $('search').value = ''; say('');
-  hit[1] === (CH && CH.freq) ? setTarget(hit[0]) : load(hit[1], hit[0]);
+  hit[1] === (CH && CH.freq) ? setTarget(hit[3] || hit[0]) : load(hit[1], hit[3] || hit[0]);
 }
 // Picking a suggestion jumps immediately; a complete call sign jumps after a short pause
 // (so typing WCB on the way to WCBS doesn't jump early); Enter takes the best prefix match.
@@ -553,7 +563,7 @@ window.addEventListener('hashchange', fromHash);
 (async () => {
   try { IDX = await getJSON('out/index.json'); }
   catch (e) { return say(`No build available yet (${e.message}). Run: python -m mw_explorer build`); }
-  $('calls').innerHTML = IDX.calls.map(c => `<option value="${c[0]} ${c[1]} kHz ${c[2]}">`).join('');
+  $('calls').innerHTML = IDX.calls.map(c => `<option value="${esc(callOption(c))}">`).join('');
   renderLoc();
   fromHash();
 })();

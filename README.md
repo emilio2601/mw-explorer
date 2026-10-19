@@ -12,8 +12,15 @@ null affects interference.
   allotments, deleted calls and duplicate notifications are dropped; day/night transmitter sites
   are merged. Manual corrections to station data and power estimates are recorded in
   `station_overrides.json`.
+- **Travelers’ information stations (TIS)** come from the FCC ULS public-safety license data.
+  Active fixed transmitters on 530–1700 kHz are included, with separate entries for each licensed
+  site. Expired licenses, mobile/temporary assignments and explicitly non-AM emissions are excluded.
 - **Antennas** use the licensed day/night patterns. Directional arrays use the FCC standard
   pattern (47 CFR 73.150/73.160) computed in 3D from the tower data.
+  TIS antennas use a short-vertical approximation scaled by reported output power, gain and line
+  loss, capped by listed ERP. Gain is interpreted as dBd. Missing gain falls back to listed ERP;
+  output power alone uses an ideal short vertical. Station popups show the reported power, gain
+  and installation height. Installation height is kept separate from electrical antenna length.
 - **Skywave** approximates ITU-R P.1147 using sunspot number, geomagnetic latitude and the hour
   relative to sunset/sunrise at the path midpoint, with increased absorption during daylight.
   **Groundwave** uses a flat-earth Norton approximation with an approximate curvature loss.
@@ -43,12 +50,20 @@ cores; use `--workers` to limit parallelism. Two builds are kept.
 For a smaller build, use `--freq 540` to select a channel or `--step 1.0` for a coarser grid.
 The coarser grid can miss small stations' local coverage.
 
+The first build also downloads the [FCC ULS land-mobile archive](https://data.fcc.gov/download/pub/uls/complete/l_LMpriv.zip)
+(about 424 MB). It streams to a temporary file and caches only the parsed TIS records in
+`data/cache/uls_tis.json` for seven days. Refresh failures reuse the last good cache; an initial
+failure stops the build. `--refresh` refreshes all sources, and `--no-uls` omits TIS stations.
+Allow space for the temporary archive during refresh. Small TIS coverage areas may fall between
+the default grid cells; station markers and levels at your chosen location still include them.
+
 ## Layout
 
 | Path | What |
 |---|---|
 | `mw_explorer/sources.py` | FCC / ISED / CRT fetching and parsing, cache |
 | `mw_explorer/stations.py` | per-channel station lists: license checks, de-duplication, overrides |
+| `mw_explorer/uls.py` | cached ULS import of fixed TIS sites and antenna data |
 | `mw_explorer/antenna.py` | antenna patterns |
 | `mw_explorer/model.py` | skywave and groundwave field strength |
 | `mw_explorer/build.py` | daily build: grid frames per channel and hour |

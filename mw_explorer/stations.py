@@ -11,6 +11,7 @@ from concurrent.futures import ThreadPoolExecutor
 from . import config
 from .antenna import Antenna
 from .geo import gc_km
+from .uls import load_uls, tis_stations
 from .sources import (FCC_BAND_URL, FCC_CACHE_DAYS, FCC_FAC_URL, fetch_crt, fetch_ised, fresh, http_get,
                       load_cache, parse_fcc_facility, parse_fcc_list, save_cache)
 
@@ -120,7 +121,7 @@ def fix_garbled_calls(rows, licensed):
             r["call"] = "X" + r["call"][1:]
 
 
-def discover(home, max_km, freqs, refresh, exclude=(), use_ised=True, box=None, use_crt=True):
+def discover(home, max_km, freqs, refresh, exclude=(), use_ised=True, box=None, use_crt=True, use_uls=True):
     """Stations per channel: {freq: [station, ...]} plus {freq: {"CALL (CC)", ...} dropped as unlicensed}."""
     cache = load_cache()
     if not fresh(cache.get("band"), refresh):
@@ -254,9 +255,17 @@ def discover(home, max_km, freqs, refresh, exclude=(), use_ised=True, box=None, 
         if x.get("state"):
             crt_states[(x["call"], x["freq"])] = x["state"]
     overrides = load_overrides()
-    return {f: apply_overrides(build_stations(rows, exclude, f, ised_ops.get(f, []), crt_cities, crt_states),
-                               f, overrides)
-            for f, rows in by_freq.items()}, dropped
+    assembled = {f: build_stations(rows, exclude, f, ised_ops.get(f, []), crt_cities, crt_states)
+                 for f, rows in by_freq.items()}
+    if use_uls:
+        tis = defaultdict(list)
+        for row in load_uls(refresh):
+            if row["freq"] in wanted and in_area(row["lat"], row["lon"]):
+                tis[row["freq"]].append(row)
+        for freq, rows in tis.items():
+            assembled.setdefault(freq, []).extend(tis_stations(rows, exclude))
+        print(f"Included {sum(len(rows) for rows in tis.values())} fixed ULS TIS sites.", file=sys.stderr)
+    return {f: apply_overrides(stations, f, overrides) for f, stations in assembled.items()}, dropped
 
 
 def load_overrides():
@@ -289,7 +298,10 @@ def apply_overrides(stations, freq, overrides):
             adj = rule.get("adjust_db", 0)
             slot_kw = kw.get(slot) if isinstance(kw, dict) else kw
             if slot_kw:
-                ant.label = ant.label.replace(f"{ant.kw:g} kW", f"{slot_kw:g} kW", 1)
+                if st.get("service") == "TIS":
+                    ant.label = f"{slot_kw * 1000:g} W TIS" + (" (ERP)" if "(ERP)" in ant.label else "")
+                else:
+                    ant.label = ant.label.replace(f"{ant.kw:g} kW", f"{slot_kw:g} kW", 1)
                 ant.adjust_db = adj + 10 * math.log10(slot_kw / ant.kw)
             else:
                 ant.adjust_db = adj

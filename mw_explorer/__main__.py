@@ -1,7 +1,6 @@
 """mw-explorer: predict AM radio reception across North America and the Caribbean."""
 import argparse
 import os
-import pickle
 import sys
 import webbrowser
 from datetime import datetime, timedelta, timezone
@@ -19,12 +18,13 @@ def parse_latlon(s):
 def cmd_build(args):
     from .build import build
     exclude = {c.strip().upper() for c in (args.exclude or "").split(",") if c.strip()}
-    build(args.freq, args.hours, args.step, args.workers, args.refresh, exclude, not args.no_ised, not args.no_crt)
+    build(args.freq, args.hours, args.step, args.workers, args.refresh, exclude,
+          not args.no_ised, not args.no_crt, not args.no_uls)
 
 
 def cmd_relabel(args):
     from .build import relabel
-    relabel(not args.no_ised, not args.no_crt)
+    relabel(not args.no_ised, not args.no_crt, not args.no_uls)
 
 
 def cmd_serve(args):
@@ -35,13 +35,19 @@ def cmd_serve(args):
 
 
 def cmd_report(args):
-    try:
-        db = pickle.loads((config.out_dir() / "db.pickle").read_bytes())
-    except FileNotFoundError:
+    from .server import STORE
+    db = STORE.get()
+    if db is None:
         sys.exit("No build yet. Run: python -m mw_explorer build")
     stations = db["stations"].get(args.freq)
     if not stations:
         sys.exit(f"{args.freq} kHz is not in the current build.")
+    def matches(st):
+        return bool(args.target) and args.target.upper() in (st["call"], st.get("id", st["call"]))
+
+    def label(st):
+        return st["call"] + (f" site {st['uls']['location']}" if st.get("uls") else "")
+
     lat, lon = args.home
     now = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
     hours = [(now + timedelta(hours=i)).strftime(HOUR_FMT) for i in range(args.hours)]
@@ -49,18 +55,18 @@ def cmd_report(args):
     if args.wspr:
         loud = levels_at(stations, args.freq, lat, lon, db["ssn"], hours[:1])
         pick = [r["i"] for r in sorted(loud, key=lambda r: -(r["t"][0] or -999))[:5]]
-        pick += [k for k, st in enumerate(stations) if args.target and st["call"] == args.target.upper()]
+        pick += [k for k, st in enumerate(stations) if matches(st)]
         res = wspr_deltas(stations, args.freq, lat, lon, db["ssn"], set(pick))
         deltas = {k: v["delta"] for k, v in res.items() if v["delta"] is not None}
         print("WSPR corrections now: " + (", ".join(f"{stations[k]['call']} {d:+.1f} dB" for k, d in deltas.items())
                                           or "none (no dark proxy paths with a baseline)"))
     rows = levels_at(stations, args.freq, lat, lon, db["ssn"], hours, deltas)
-    target = args.target.upper() if args.target else None
+    target = next((label(st) for st in stations if matches(st)), args.target)
     print(f"\n{args.freq} kHz at {lat:.2f},{lon:.2f} — loudest now (dBµV/m):")
     print(f"  {'station':16s}{'km':>6s}{'brg':>6s}{'antenna':>16s}{'sky':>6s}{'ground':>8s}{'total':>7s}")
     for r in sorted((r for r in rows if r["t"][0] is not None), key=lambda r: -r["t"][0])[:10]:
         st = stations[r["i"]]
-        print(f" {'*' if st['call'] == target else ' '}{st['call'] + ' ' + st['country']:16s}{r['km']:6d}"
+        print(f" {'*' if matches(st) else ' '}{label(st) + ' ' + st['country']:16s}{r['km']:6d}"
               f"{r['brg']:5.0f}°{st['ant'][r['m'][0]].label:>16s}{r['sky'][0]:6d}{r['gw'][0]:8d}{r['t'][0]:7d}")
     print("\nNext hours:")
     for fi, h in enumerate(hours):
@@ -69,9 +75,9 @@ def cmd_report(args):
             continue
         lead_t, lead = now_rows[0]
         rest = power_sum(*(t for t, _ in now_rows[1:]))
-        line = f"  {h[8:]}:00 UTC  loudest {stations[lead['i']]['call']:>8s} {lead_t:4d}"
+        line = f"  {h[8:]}:00 UTC  loudest {label(stations[lead['i']]):>8s} {lead_t:4d}"
         line += f" ({lead_t - rest:+.0f} dB)" if rest is not None else ""
-        tr = next((r for t, r in now_rows if stations[r["i"]]["call"] == target), None)
+        tr = next((r for t, r in now_rows if matches(stations[r["i"]])), None)
         if target:
             others = power_sum(*(t for t, r in now_rows if r is not tr))
             line += (f"   {target} {tr['t'][fi]:4d}, vs rest {tr['t'][fi] - others:+.0f} dB"
@@ -89,15 +95,17 @@ def main():
     b.add_argument("--hours", type=int, default=48, help="hours to compute from the current hour (default 48)")
     b.add_argument("--step", type=float, default=0.5, help="grid step in degrees (default 0.5)")
     b.add_argument("--workers", type=int, default=None, help="processes (default: CPU count)")
-    b.add_argument("--refresh", action="store_true", help="re-download FCC/ISED/CRT data even if cached")
+    b.add_argument("--refresh", action="store_true", help="re-download FCC/ISED/CRT/ULS data even if cached")
     b.add_argument("--exclude", help="comma-separated call signs to drop")
     b.add_argument("--no-ised", action="store_true", help="skip the ISED check for Canadian stations")
     b.add_argument("--no-crt", action="store_true", help="skip the CRT license check for Mexican stations")
+    b.add_argument("--no-uls", action="store_true", help="omit ULS travelers’ information stations")
     b.set_defaults(func=cmd_build)
 
     lb = sub.add_parser("relabel", help="refresh station names and states in the current build, no recompute")
     lb.add_argument("--no-ised", action="store_true")
     lb.add_argument("--no-crt", action="store_true")
+    lb.add_argument("--no-uls", action="store_true")
     lb.set_defaults(func=cmd_relabel)
 
     s = sub.add_parser("serve", help="serve the explorer and its API")
@@ -109,7 +117,7 @@ def main():
     r = sub.add_parser("report", help="terminal report for one channel at one location")
     r.add_argument("--freq", type=int, required=True)
     r.add_argument("--home", type=parse_latlon, default=(40.71, -74.01), help="lat,lon (default NYC)")
-    r.add_argument("--target", help="call sign to compare against everything else")
+    r.add_argument("--target", help="call sign or ULS site ID to compare against other stations")
     r.add_argument("--hours", type=int, default=25)
     r.add_argument("--wspr", action="store_true", help="apply the live WSPR correction to the current hour")
     r.set_defaults(func=cmd_report)
