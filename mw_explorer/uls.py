@@ -156,7 +156,7 @@ def load_uls(refresh=False):
         try:
             # TemporaryFile cleans up even after an interrupted download or parsing failure.
             with tempfile.TemporaryFile(dir=path.parent) as archive:
-                request = urllib.request.Request(ULS_URL, headers={'User-Agent': 'mw-explorer/1.0', 'Accept': '*/*'})
+                request = urllib.request.Request(ULS_URL, headers={'Accept': '*/*'})
                 with urllib.request.urlopen(request, timeout=120) as response:
                     modified = response.headers.get('Last-Modified')
                     shutil.copyfileobj(response, archive, length=1024 * 1024)
