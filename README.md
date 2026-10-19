@@ -1,4 +1,4 @@
-# MW Explorer
+# mw-explorer
 
 Explore predicted AM radio reception on every broadcast channel (530–1700 kHz) across North America
 and the Caribbean, hour by hour. Compare stations at your location and see how a loop antenna's

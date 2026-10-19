@@ -1,4 +1,4 @@
-"""MW Explorer: predict AM radio reception across North America and the Caribbean."""
+"""mw-explorer: predict AM radio reception across North America and the Caribbean."""
 import argparse
 import os
 import pickle
