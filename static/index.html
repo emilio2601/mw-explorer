@@ -1,7 +1,10 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>AM Channel Explorer</title>
+<title>MW Explorer — AM radio reception</title>
+<meta name="description" content="Explore hourly AM radio reception across North America and the Caribbean with propagation maps, station comparisons, loop antenna nulls, and live WSPR corrections.">
+<meta name="theme-color" content="#2a78d6">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <style>
@@ -14,7 +17,8 @@
   .panel { position:absolute; z-index:1000; top:12px; right:12px; width:360px; max-height:calc(100% - 24px);
     overflow:auto; background:var(--surface); border:1px solid var(--ring); border-radius:8px;
     padding:12px 14px; box-shadow:0 2px 12px rgba(0,0,0,.08); box-sizing:border-box; }
-  h1 { font-size:14px; margin:0 0 8px; }
+  h1 { font-size:14px; margin:0; }
+  .intro { margin:2px 0 8px; }
   .controls { display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
   .controls input { font:inherit; padding:4px 6px; border:1px solid #c3c2b7; border-radius:6px; background:#fff; }
   #freq { width:70px; font-weight:600; font-variant-numeric:tabular-nums; }
@@ -53,7 +57,8 @@
 </style></head>
 <body><div id="map"></div>
 <div class="panel">
-  <h1>AM channel explorer</h1>
+  <h1>MW Explorer</h1>
+  <p class="intro sub">AM radio reception, hour by hour.</p>
   <div class="controls">
     <button id="prev" aria-label="Previous channel">◀</button>
     <input id="freq" type="number" min="530" max="1700" step="10" aria-label="Frequency in kHz"> kHz

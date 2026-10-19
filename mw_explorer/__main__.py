@@ -1,4 +1,4 @@
-"""python -m mw_explorer {build,serve,report}"""
+"""MW Explorer: predict AM radio reception across North America and the Caribbean."""
 import argparse
 import os
 import pickle

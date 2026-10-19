@@ -1,6 +1,7 @@
 """HTTP server: the explorer page, the daily build output, and per-location APIs.
 
   GET /                          explorer page (static/index.html)
+  GET /favicon.svg               radio antenna icon
   GET /out/...                   build output (index.json, ch/<kHz>/stations.json, ch/<kHz>/<hour>.bin.gz)
   GET /api/home?freq&lat&lon&start&n   levels from every station at that location, per hour
   GET /api/wspr?freq&lat&lon&i=1,2     live WSPR skywave correction for those stations, for the current hour
@@ -202,6 +203,8 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if url.path in ("/", "/index.html"):
                 return self.send_file(config.STATIC_DIR / "index.html", "no-cache")
+            if url.path == "/favicon.svg":
+                return self.send_file(config.STATIC_DIR / "favicon.svg", "public, max-age=86400")
             if url.path == "/api/health":
                 db = STORE.get()
                 return self.send_json(200, {"ok": db is not None, "build": db and db["build"]})
