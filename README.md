@@ -13,14 +13,9 @@ null affects interference.
   are merged. Manual corrections to station data and power estimates are recorded in
   `station_overrides.json`.
 - **Travelers’ information stations (TIS)** come from the FCC ULS public-safety license data.
-  Active fixed transmitters on 530–1700 kHz are included, with separate entries for each licensed
-  site. Expired licenses, mobile/temporary assignments and explicitly non-AM emissions are excluded.
-- **Antennas** use the licensed day/night patterns. Directional arrays use the FCC standard
-  pattern (47 CFR 73.150/73.160) computed in 3D from the tower data.
-  TIS antennas use a short-vertical approximation scaled by reported output power, gain and line
-  loss, capped by listed ERP. Gain is interpreted as dBd. Missing gain falls back to listed ERP;
-  output power alone uses an ideal short vertical. Station popups show the reported power, gain
-  and installation height. Installation height is kept separate from electrical antenna length.
+  Each fixed transmitter site is listed separately.
+- **Antennas** use licensed day/night patterns. Directional arrays use the FCC standard
+  pattern (47 CFR 73.150/73.160). TIS coverage uses reported power and antenna data where available.
 - **Skywave** approximates ITU-R P.1147 using sunspot number, geomagnetic latitude and the hour
   relative to sunset/sunrise at the path midpoint, with increased absorption during daylight.
   **Groundwave** uses a flat-earth Norton approximation with an approximate curvature loss.
@@ -42,49 +37,12 @@ python3 -m mw_explorer report --freq 540 --home 40.71,-74.01 --target XEWA --wsp
 python3 -m unittest                   # tests
 ```
 
-The first build fetches about 3,000 FCC facility pages plus the ISED and CRT files. Downloads are
-cached for 30 days in `data/cache/`. A full build uses a 0.5° grid covering 48 hours and writes
-several hundred MB. Build time depends on the available CPU cores; use `--workers` to limit parallelism. Two builds are kept.
+The first build downloads the FCC, ISED, CRT and ULS data and computes coverage for 48 hours.
+Allow several hundred MB for source downloads and build output. Data is stored in `./data/`;
+set `MW_DATA_DIR` to use another location.
 
-For a smaller build, use `--freq 540` to select a channel or `--step 1.0` for a coarser grid.
-At zoom level 7 and above, the map replaces coarse cells near TIS sites with 1.85 km cells.
-Refinement covers entire coarse cells intersecting a 20 km neighborhood around each
-TIS site. Overlapping neighborhoods share cells, and each cell includes interference from all
-stations on the channel. Other areas use the continental grid.
-
-The first build also downloads the [FCC ULS land-mobile archive](https://data.fcc.gov/download/pub/uls/complete/l_LMpriv.zip)
-(about 424 MB). It streams to a temporary file and caches only the parsed TIS records in
-`data/cache/uls_tis.json` for seven days. Refresh failures reuse the last good cache; an initial
-failure stops the build. `--refresh` refreshes all sources, and `--no-uls` omits TIS stations.
-Allow space for the temporary archive during refresh.
-
-`python3 -m mw_explorer refine --workers 3` adds local TIS detail to an existing build without
-recomputing the continental frames. Regular builds include both resolutions. Detail is computed in
-batches to limit memory use. The browser loads the selected hour first, then prefetches the
-adjacent hours. Changing channels or scrubbing the timeline cancels obsolete requests. Frames
-use gzip compression and a bounded browser cache.
-
-## Layout
-
-| Path | What |
-|---|---|
-| `mw_explorer/sources.py` | FCC / ISED / CRT fetching and parsing, cache |
-| `mw_explorer/stations.py` | per-channel station lists: license checks, de-duplication, overrides |
-| `mw_explorer/uls.py` | cached ULS import of fixed TIS sites and antenna data |
-| `mw_explorer/antenna.py` | antenna patterns |
-| `mw_explorer/model.py` | skywave and groundwave field strength |
-| `mw_explorer/build.py` | daily build: grid frames per channel and hour |
-| `mw_explorer/detail.py` | sparse local coverage grids around TIS sites |
-| `mw_explorer/home.py` | levels at any location (used by the API and `report`) |
-| `mw_explorer/live.py` | Kp, sunspot number, WSPR |
-| `mw_explorer/server.py` | HTTP server and API |
-| `static/index.html` | the explorer page |
-
-Build output is stored in `$MW_DATA_DIR/out` (default `./data/out`). Each build gets its own directory,
-`builds/<id>/`, holding `db.pickle` (the station database the server loads) and `ch/<kHz>/stations.json`
-plus one gzipped grid frame per UTC hour. `index.json` names the current build and is switched only
-once a build is complete; the previous build is kept so open pages keep working, and the page tells the
-API which build it loaded so station numbers always line up.
+Use `--freq 540` for a single-channel build, `--workers 3` to limit CPU use, or `--refresh` to
+refresh the source data. Run `python3 -m mw_explorer build --help` for all options.
 
 ## API
 
